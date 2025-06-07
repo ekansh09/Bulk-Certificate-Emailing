@@ -1,0 +1,8 @@
+pandas
+mammoth
+docxtpl
+docx2pdf
+retrying
+PyQt5
+PyQtWebEngine
+openpyxl
