@@ -26,10 +26,19 @@ from PyQt5.QtWidgets import (
     QTableWidgetItem, QListWidget, QVBoxLayout, QHBoxLayout, QComboBox,
     QMessageBox, QGroupBox, QFormLayout
 )
+from PyQt5.QtCore import QUrl
+from PyQt5.QtGui import QDesktopServices
 from PyQt5.QtCore import Qt, QObject, pyqtSignal, QThread
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 
-CONFIG_FILE = 'config.json'
+# Determine application directory (handles PyInstaller)
+if getattr(sys, 'frozen', False):
+    APP_DIR = os.path.dirname(sys.executable)
+else:
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = os.path.join(APP_DIR, 'config.json')
+CERT_DIR = os.path.join(APP_DIR, 'certificates')
+
 
 class Worker(QObject):
     """
@@ -90,9 +99,8 @@ class Worker(QObject):
         if not filename.lower().endswith('.pdf'):
             filename += '.pdf'
         # Ensure certificates directory exists
-        cert_dir = os.path.join(os.getcwd(), 'certificates')
-        os.makedirs(cert_dir, exist_ok=True)
-        out_path = os.path.join(cert_dir, filename)
+        os.makedirs(CERT_DIR, exist_ok=True)
+        out_path = os.path.join(CERT_DIR, filename)
         convert(tmp_docx, out_path)
         return out_path
 
@@ -514,12 +522,7 @@ class CertGenerator(QMainWindow):
             if not pdf0.lower().endswith('.pdf'):
                 pdf0 += '.pdf'
             convert(tmp, pdf0)
-            if sys.platform.startswith('darwin'):
-                os.system(f"open '{pdf0}'")
-            elif os.name == 'nt':
-                os.startfile(pdf0)
-            else:
-                os.system(f"xdg-open '{pdf0}'")
+            QDesktopServices.openUrl(QUrl.fromLocalFile(pdf0))
             resp = QMessageBox.question(
                 self, "Proceed?", "Proceed with emailing certificates?",
                 QMessageBox.Yes | QMessageBox.No
@@ -566,7 +569,7 @@ class CertGenerator(QMainWindow):
             import csv
             failed_col = self.cb_recipient.currentText()
             # Prepare CSV with all original columns + error column
-            failed_file = 'failed_list.csv'
+            failed_file = os.path.join(APP_DIR, 'failed_list.csv')
             with open(failed_file, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
                 # Header: original columns + error
@@ -577,7 +580,7 @@ class CertGenerator(QMainWindow):
                     rows = self.data_df[self.data_df[failed_col].astype(str) == email]
                     for _, row in rows.iterrows():
                         writer.writerow(list(row.values) + [error])
-            self.log.append(f"Exported {failed_file} with full rows and error column.")
+            self.log.append(f"Exported {os.path.abspath(failed_file)} with full rows and error column.")
 
 
 

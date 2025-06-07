@@ -71,11 +71,18 @@ A cross-platform PyQt5 application to generate and send personalized PDF certifi
    pip install -r requirements.txt
    ```
 
-3. **(Optional) Package the app**
+3. **Run the app**
+
+   ```bash
+   python app.py
+   ```
+
+
+4. **(Optional) Package the app**
 
    ```bash
    pip install pyinstaller
-   pyinstaller --onefile certificate_generator.py
+   pyinstaller --noconsole --onefile app.py
    ```
 
 ---
