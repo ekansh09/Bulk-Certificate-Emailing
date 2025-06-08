@@ -7,6 +7,19 @@ A cross-platform PyQt5 application to generate and send personalized PDF certifi
 
 ---
 
+## 📸 Screenshots
+
+Below are screenshots showcasing each main page (tab) and its functionality:
+
+| Data Mapping                    | Template Preview                    | Authentication                    |
+| ------------------------------- | ----------------------------------- | --------------------------------- |
+| ![Data Mapping](./images/1.png) | ![Template Preview](./images/2.png) | ![Authentication](./images/3.png) |
+
+| Email & Filename                    | Run & Progress                    |
+| ----------------------------------- | --------------------------------- |
+| ![Email & Filename](./images/4.png) | ![Run & Progress](./images/5.png) |
+
+
 ## 🚀 Features
 
 1. **Data Import & Mapping**
@@ -15,10 +28,15 @@ A cross-platform PyQt5 application to generate and send personalized PDF certifi
    * Map sheet columns to lowercase Jinja-style placeholders (e.g. `name`, `paper_id`, `email`).
    * Auto-detect the `email` column for bulk emailing recipients.
 
+   ![Data Mapping Tab](./images/1.png)
+
+
 2. **Template Preview**
 
    * Load a `.docx` template containing `{{placeholders}}`.
    * Live HTML preview with zoom controls before bulk certificate generation.
+
+   ![Template Preview Tab](./images/2.png)
 
 3. **Authentication**
 
@@ -26,11 +44,16 @@ A cross-platform PyQt5 application to generate and send personalized PDF certifi
    * Securely save credentials in `config.json`.
    * Test SMTP connection to verify bulk emailing capability.
 
+   ![Authentication Tab](./images/3.png)
+
+
 4. **Email & Filename Configuration**
 
    * Specify email subject, body, and filename pattern using any mapped placeholders.
    * Default patterns provided; all fields mandatory for bulk certificate emailing.
    * Real-time list of available placeholders for copy-&-paste.
+
+   ![Email & Filename Tab](./images/4.png)
 
 5. **Preview & Confirm**
 
@@ -41,6 +64,8 @@ A cross-platform PyQt5 application to generate and send personalized PDF certifi
    * Renders each row into a `.docx`, converts to PDF, then sends via Gmail SMTP with retry logic.
    * Progress bar shows percent complete and delivered count (e.g. “23/100”).
    * Detailed log of successes and failures; export `failed_list.csv`.
+
+   ![Run & Progress Tab](./images/5.png)
 
 7. **Error Handling**
 
@@ -59,8 +84,8 @@ A cross-platform PyQt5 application to generate and send personalized PDF certifi
 1. **Clone the repository**
 
    ```bash
-   git clone https://github.com/your-org/certificate-generator.git
-   cd certificate-generator
+   git clone https://github.com/ekansh09/Bulk-Certificate-Emailing.git
+   cd Bulk-Certificate-Emailing
    ```
 
 2. **Create a virtual environment & install dependencies**
@@ -140,6 +165,13 @@ A cross-platform PyQt5 application to generate and send personalized PDF certifi
 
 ---
 
+## 💡 Troubleshooting
+
+* **Tag Errors**: Alerts for undefined or uppercase placeholders.
+* **Slow Performance**: Disable preview or reduce batch size.
+* **Packaging Issues**: See [PyInstaller docs](https://pyinstaller.org).
+
+---
 
 ## 📄 License
 
