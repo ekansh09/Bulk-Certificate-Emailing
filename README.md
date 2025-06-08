@@ -67,7 +67,7 @@ A cross-platform PyQt5 application to generate and send personalized PDF certifi
 
    ```bash
    python3 -m venv venv
-   source venv/bin/activate   # Windows: venv\Scripts\activate
+   venv\Scripts\activate    # MacOS: source venv/bin/activate
    pip install -r requirements.txt
    ```
 

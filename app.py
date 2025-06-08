@@ -108,7 +108,7 @@ class Worker(QObject):
         for attempt in range(1, 4):
             try:
                 convert(tmp_docx, out_path)
-                self.log(f"[PDF] Converted via Word COM on attempt {attempt}")
+                # self.log(f"[PDF] Converted via Word COM on attempt {attempt}")
                 break
             except Exception as e:
                 last_exc = e
