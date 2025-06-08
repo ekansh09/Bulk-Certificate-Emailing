@@ -11,7 +11,9 @@ import os
 import tempfile
 import re
 import json
+import time
 import pandas as pd
+import logging
 import mammoth
 from docxtpl import DocxTemplate
 from docx2pdf import convert
@@ -38,6 +40,14 @@ else:
     APP_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(APP_DIR, 'config.json')
 CERT_DIR = os.path.join(APP_DIR, 'certificates')
+LOG_FILE    = os.path.join(APP_DIR, 'app.log')
+
+logging.basicConfig(
+    filename=LOG_FILE,
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s %(message)s'
+)
+logging.info("=== Application Started ===")
 
 
 class Worker(QObject):
@@ -64,63 +74,129 @@ class Worker(QObject):
         self.auth_user = auth_user
         self.auth_pwd = auth_pwd
 
-    def run(self):
-        total = len(self.data_df)
-        sent, failed = 0, []
-        for i, row in self.data_df.iterrows():
-            context = {ph: str(row[col]) for ph, col in self.mapping.items()}
-            recipient = str(row[self.recipient_col])
-            try:
-                pdf_path = self.generate_certificate(context)
-                self.send_email(recipient, context, pdf_path)
-                sent += 1
-                self.log_message.emit(f"Sent to {recipient}")
-            except Exception as e:
-                failed.append((recipient, str(e)))
-                self.log_message.emit(f"Failed for {recipient}: {e}")
+    def log(self, message):
+        """Emit to GUI and write to file."""
+        self.log_message.emit(message)
+        logging.info(message)
 
-            # Update after each attempt
-            processed = sent + len(failed)
-            percent = int((processed / total) * 100)
-            self.count_updated.emit(processed, total)
-            self.progress_updated.emit(percent)
+    @retry(stop_max_attempt_number=3, wait_fixed=2000)
+    def send_message(self, server, recipient, msg, attempt):
+        try:
+            server.send_message(msg)
+            self.log(f"[Sent] {recipient}")
+        except Exception as e:
+            self.log(f"[Retry {attempt}] Failed to send to {recipient}: {e}")
+            raise
 
-        # Finalize
-        self.count_updated.emit(total, total)
-        self.progress_updated.emit(100)
-        self.finished.emit(sent, failed)
 
     def generate_certificate(self, context):
+        # 1. Render .docx template
         tpl = DocxTemplate(self.template_path)
         tpl.render(context)
         tmp_docx = tempfile.NamedTemporaryFile(suffix='.docx', delete=False).name
         tpl.save(tmp_docx)
+
+        # 2. Compute output PDF path
         filename = self.filename_pattern.format(**context)
         if not filename.lower().endswith('.pdf'):
             filename += '.pdf'
-        # Ensure certificates directory exists
         os.makedirs(CERT_DIR, exist_ok=True)
         out_path = os.path.join(CERT_DIR, filename)
-        convert(tmp_docx, out_path)
+
+        # 3. Try MS Word COM conversion up to 3 times
+        last_exc = None
+        for attempt in range(1, 4):
+            try:
+                convert(tmp_docx, out_path)
+                self.log(f"[PDF] Converted via Word COM on attempt {attempt}")
+                break
+            except Exception as e:
+                last_exc = e
+                self.log(f"[PDF] Word COM failed (attempt {attempt}): {e}")
+                time.sleep(2)
+        else:
+            # All retries failed
+            os.remove(tmp_docx)
+            raise RuntimeError(f"Could not convert DOCX → PDF after 3 attempts: {last_exc}")
+
+        # 4. Cleanup and return
+        try:
+            os.remove(tmp_docx)
+        except OSError:
+            pass
+
         return out_path
 
-    @retry(stop_max_attempt_number=3, wait_fixed=2000)
-    def send_email(self, recipient, context, attachment_path):
-        if not self.auth_user or not self.auth_pwd:
-            raise ValueError("Gmail credentials not set.")
-        msg = MIMEMultipart()
-        msg['Subject'] = self.email_subj.format(**context)
-        msg['From'] = self.auth_user
-        msg['To'] = recipient
-        msg.attach(MIMEText(self.email_body.format(**context), 'plain'))
-        with open(attachment_path, 'rb') as f:
-            part = MIMEApplication(f.read(), _subtype='pdf')
-        part.add_header('Content-Disposition', 'attachment', filename=os.path.basename(attachment_path))
-        msg.attach(part)
-        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+    def run(self):
+        total = len(self.data_df)
+        sent, failed = 0, []
+
+        # Phase 1: generate all PDFs first (so SMTP isn't idle)
+        self.log("Generating all certificates...")
+        pdf_paths = []
+        for idx, row in self.data_df.iterrows():
+            context = {ph: str(row[col]) for ph, col in self.mapping.items()}
+            try:
+                pdf = self.generate_certificate(context)
+                pdf_paths.append((row, context, pdf))
+                self.log(f"Generated PDF for {context.get('name','<no-name>')}")
+            except Exception as e:
+                recipient = str(row[self.recipient_col])
+                failed.append((recipient, f"PDF error: {e}"))
+                self.log(f"Failed PDF for {recipient}: {e}")
+
+            processed = len(pdf_paths) + len(failed)
+            pct = int((processed / total) * 100)
+            self.count_updated.emit(processed, total)
+            self.progress_updated.emit(pct)
+
+        # Phase 2: send emails over a single SMTP connection
+        self.log("Starting email dispatch...")
+        if self.auth_user and self.auth_pwd:
+            server = smtplib.SMTP('smtp.gmail.com', 587)
             server.starttls()
             server.login(self.auth_user, self.auth_pwd)
-            server.send_message(msg)
+        else:
+            self.log("Gmail credentials not set; aborting email send.")
+            server = None
+
+        for attempt, (row, context, pdf_path) in enumerate(pdf_paths, start=1):
+            recipient = str(row[self.recipient_col])
+            msg = MIMEMultipart()
+            msg['Subject'] = self.email_subj.format(**context)
+            msg['From']    = self.auth_user
+            msg['To']      = recipient
+            msg.attach(MIMEText(self.email_body.format(**context), 'plain'))
+            with open(pdf_path, 'rb') as f:
+                part = MIMEApplication(f.read(), _subtype='pdf')
+            part.add_header(
+                'Content-Disposition',
+                'attachment',
+                filename=os.path.basename(pdf_path)
+            )
+            msg.attach(part)
+
+            if server:
+                try:
+                    self.send_message(server, recipient, msg, attempt)
+                    sent += 1
+                except Exception as e:
+                    failed.append((recipient, f"Email error: {e}"))
+                time.sleep(1)  # simple rate-limit
+
+            processed = sent + len(failed)
+            pct = int((processed / total) * 100)
+            self.count_updated.emit(processed, total)
+            self.progress_updated.emit(pct)
+
+        if server:
+            server.quit()
+
+        # Finalize
+        self.count_updated.emit(total, total)
+        self.progress_updated.emit(100)
+        self.log(f"Finished: {sent}/{total} sent, {len(failed)} failed.")
+        self.finished.emit(sent, failed)
 
 class CertGenerator(QMainWindow):
     """
@@ -356,7 +432,9 @@ class CertGenerator(QMainWindow):
             self.log.append(f"Loaded data: {path} ({len(self.data_df)} rows)")
             self.update_vars_list()
         except Exception as e:
-            self.log.append(f"Error loading data: {e}")
+            import traceback
+            self.log.append(f"Error loading data: {e}\n{traceback.format_exc()}")
+            # self.log.append(f"Error loading data: {e}")
 
     def load_data(self):
         path, _ = QFileDialog.getOpenFileName(
