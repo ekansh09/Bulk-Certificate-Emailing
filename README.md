@@ -171,9 +171,11 @@ Below are screenshots showcasing each main page (tab) and its functionality:
 
 ## 💡 Troubleshooting
 
+* **Access Errors**: Try running with administrator access (Right click and Run as Administrator).
 * **Tag Errors**: Alerts for undefined or uppercase placeholders.
 * **Slow Performance**: Disable preview or reduce batch size.
 * **Packaging Issues**: See [PyInstaller docs](https://pyinstaller.org).
+
 
 ---
 
