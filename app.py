@@ -1,9 +1,9 @@
 """
-Conference Certificate Generator Application
+Bulk Attachment Personalizer & Emailer
 
 Author: Ekansh Chauhan
 Date: June 7, 2025
-Description: PyQt5-based certificate generation and emailing application.
+Description: PyQt5-based attachment generation and emailing application.
 """
 
 import sys
@@ -52,7 +52,7 @@ logging.info("=== Application Started ===")
 
 class Worker(QObject):
     """
-    Handles generation of certificates and email dispatch.
+    Handles generation of attachments and email dispatch.
 
     Author: Ekansh Chauhan
     """
@@ -200,7 +200,7 @@ class Worker(QObject):
 
 class CertGenerator(QMainWindow):
     """
-    Conference Certificate Generator GUI.
+    GUI.
 
     Author: Ekansh Chauhan
     """

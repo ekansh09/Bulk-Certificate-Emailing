@@ -1,9 +1,24 @@
-# Conference Certificate Generator & Bulk Emailer
+# Bulk Attachment Personalizer & Emailer
 
-A cross-platform PyQt5 application to generate and send personalized PDF certificates in bulk from a Word template and spreadsheet data via Gmail.
+A cross-platform PyQt5 application to generate and send personalized PDF (or other) attachments in bulk from a Word template and spreadsheet data via Gmail.
 
-**Author:** Ekansh Chauhan  
-**Email:** echauhan09@gmail.com
+**Author:** Ekansh Chauhan
+**Email:** [echauhan09@gmail.com](mailto:echauhan09@gmail.com)
+
+## 🌟 Use Cases
+
+Whether you’re organizing events or sending personalized attachments at scale, this app lets you:
+
+* 🎟️ Automate certificate issuance for events, workshops, and training sessions.
+* ✉️ Send personalized event invitations, thank-you letters, or newsletters at scale.
+* 📄 Generate individualized billing statements, invoices, or financial summaries.
+* 🆔 Dispatch customized membership cards, badges, or access passes.
+* 🎓 Produce tailored onboarding documents for new employees, students, or volunteers.
+* 📣 Deliver personalized marketing flyers, promotions, or coupons.
+* 💌 Issue customized donation receipts or fundraising acknowledgments.
+* 📊 Create individualized progress reports, performance reviews, or educational transcripts.
+
+Leverage a single template and spreadsheet to streamline any bulk-document workflow—boost productivity, reduce errors, and enhance personalization.
 
 ---
 
@@ -19,24 +34,18 @@ Below are screenshots showcasing each main page (tab) and its functionality:
 | ----------------------------------- | --------------------------------- |
 | ![Email & Filename](./images/4.png) | ![Run & Progress](./images/5.png) |
 
-
 ## 🚀 Features
 
 1. **Data Import & Mapping**
 
-   * Load Excel (`.xlsx`) or CSV (`.csv`) attendee/author lists.
-   * Map sheet columns to lowercase Jinja-style placeholders (e.g. `name`, `paper_id`, `email`).
+   * Load Excel (`.xlsx`) or CSV (`.csv`) contact and content lists.
+   * Map sheet columns to lowercase Jinja-style placeholders (e.g. `name`, `id`, `email`, `role`).
    * Auto-detect the `email` column for bulk emailing recipients.
-
-   ![Data Mapping Tab](./images/1.png)
-
 
 2. **Template Preview**
 
    * Load a `.docx` template containing `{{placeholders}}`.
-   * Live HTML preview with zoom controls before bulk certificate generation.
-
-   ![Template Preview Tab](./images/2.png)
+   * Live HTML preview with zoom controls before bulk generation.
 
 3. **Authentication**
 
@@ -44,32 +53,25 @@ Below are screenshots showcasing each main page (tab) and its functionality:
    * Securely save credentials in `config.json`.
    * Test SMTP connection to verify bulk emailing capability.
 
-   ![Authentication Tab](./images/3.png)
-
-
-4. **Email & Filename Configuration**
+4. **Attachment & Email Configuration**
 
    * Specify email subject, body, and filename pattern using any mapped placeholders.
-   * Default patterns provided; all fields mandatory for bulk certificate emailing.
-   * Real-time list of available placeholders for copy-&-paste.
-
-   ![Email & Filename Tab](./images/4.png)
+   * Default patterns provided; all fields mandatory for personalized emailing.
+   * Real-time list of available placeholders for easy copy-&-paste.
 
 5. **Preview & Confirm**
 
-   * Optionally generate and open the first certificate PDF to verify layout and tags before bulk sending.
+   * Optionally generate and open the first attachment (e.g., certificate, letter, report) PDF to verify content and layout before sending in bulk.
 
 6. **Batch Generation & Delivery**
 
-   * Renders each row into a `.docx`, converts to PDF, then sends via Gmail SMTP with retry logic.
-   * Progress bar shows percent complete and delivered count (e.g. “23/100”).
+   * Renders each row into a `.docx`, converts to PDF (or retains chosen format), then sends via Gmail SMTP with retry logic.
+   * Progress bar shows percent complete and count (e.g. “23/100”).
    * Detailed log of successes and failures; export `failed_list.csv`.
-
-   ![Run & Progress Tab](./images/5.png)
 
 7. **Error Handling**
 
-   * Detects unmapped or improperly cased placeholders in template and email content.
+   * Detects unmapped or improperly cased placeholders in the template and email content.
    * Prevents sending until all tags match.
    * Catches network or SMTP errors with automatic retries.
 
@@ -79,7 +81,11 @@ Below are screenshots showcasing each main page (tab) and its functionality:
 
 ---
 
+---
+
 ## 🛠️ Installation
+
+> ⚠️ **Windows users:** For proper permissions, run `app.py` or `run_app.bat` as **Administrator**.
 
 1. **Clone the repository**
 
@@ -92,26 +98,38 @@ Below are screenshots showcasing each main page (tab) and its functionality:
 
    ```bash
    python3 -m venv venv
-   venv\Scripts\activate    # MacOS: source venv/bin/activate
+   # Activate the venv
+   # macOS/Linux:
+   source venv/bin/activate
+   # Windows (PowerShell):
+   # venv\Scripts\Activate
    pip install -r requirements.txt
    ```
 
 3. **Run the app**
 
-   ```bash
-   python app.py
-   ```
+   * **Directly with Python**
 
+     ```bash
+     python app.py
+     ```
+
+   * **Windows (Optional Batch Script)**
+
+     1. Open `run_app.bat` in a text editor.
+     2. Update the `TARGET_DIR` variable to the full path of your cloned project, e.g.:
+
+        ```bat
+        set "TARGET_DIR=C:\Projects\Bulk-Certificate-Emailing"
+        ```
+     3. Save the file.
+     4. Right-click `run_app.bat` and select **Run as administrator** to launch the app.
 
 4. **(Optional) Package the app**
 
    ```bash
    pip install pyinstaller
    pyinstaller --noconsole --onefile app.py
-
-   ```
-   ```bash
-   pyinstaller --noconsole --onefile --collect-all numpy --collect-all pandas app.py
    ```
 
 ---
@@ -125,16 +143,17 @@ Below are screenshots showcasing each main page (tab) and its functionality:
 
 2. **Spreadsheet**
 
-   * Ensure your sheet has an `email` column plus other columns to merge.
-   * Example: `paper_id, name, title, email` or `s_no, name, post, email`.
+   * Ensure your sheet has an `email` column plus any other data columns you wish to merge into attachments.
+   * Example: `id, name, report_data, email` or `s_no, name, status, email`.
 
 3. **Word Template**
 
-   * Use lowercase Jinja-style tags matching your placeholders, e.g.:
+   * Use lowercase Jinja-style tags matching your placeholders, for example:
 
      ```text
-     Certificate of Participation
-     This certifies that {{name}} contributed as {{post}}.
+     Report for {{name}}
+     Status: {{status}}
+     Details: {{report_data}}
      ```
 
 ---
@@ -153,13 +172,13 @@ Below are screenshots showcasing each main page (tab) and its functionality:
 
    * Go to **Authentication** tab, enter Gmail & App Password, click **Test Connection**, then **Save Credentials**.
 
-4. **Configure Email & Filename**
+4. **Configure Attachment & Email**
 
-   * In **Email & Filename** tab: select `email` column, edit subject/body, set filename pattern (e.g. `Certificate_{{name}}.pdf`).
+   * In **Email & Filename** tab: select `email` column, edit subject/body, set filename pattern (e.g. `Attachment_{{name}}.pdf`).
 
-5. **Preview First PDF** (optional)
+5. **Preview First Attachment** (optional)
 
-   * Check **Preview first PDF** to generate/open the first certificate before bulk sending.
+   * Check **Preview first PDF** to generate/open the first personalized attachment before bulk sending.
 
 6. **Start Bulk Generation & Email**
 
@@ -171,11 +190,10 @@ Below are screenshots showcasing each main page (tab) and its functionality:
 
 ## 💡 Troubleshooting
 
-* **Access Errors**: Try running with administrator access (Right click and Run as Administrator).
+* **Access Errors**: Try running with administrator access.
 * **Tag Errors**: Alerts for undefined or uppercase placeholders.
 * **Slow Performance**: Disable preview or reduce batch size.
 * **Packaging Issues**: See [PyInstaller docs](https://pyinstaller.org).
-
 
 ---
 
