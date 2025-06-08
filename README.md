@@ -108,6 +108,10 @@ Below are screenshots showcasing each main page (tab) and its functionality:
    ```bash
    pip install pyinstaller
    pyinstaller --noconsole --onefile app.py
+
+   ```
+   ```bash
+   pyinstaller --noconsole --onefile --collect-all numpy --collect-all pandas app.py
    ```
 
 ---
