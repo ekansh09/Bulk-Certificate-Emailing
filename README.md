@@ -28,11 +28,11 @@ Below are screenshots showcasing each main page (tab) and its functionality:
 
 | Data Mapping                    | Template Preview                    | Authentication                    |
 | ------------------------------- | ----------------------------------- | --------------------------------- |
-| ![Data Mapping](./images/1.png) | ![Template Preview](./images/2.png) | ![Authentication](./images/3.png) |
+| ![Data Mapping](./screenshots/1.png) | ![Template Preview](./screenshots/2.png) | ![Authentication](./screenshots/3.png) |
 
 | Email & Filename                    | Run & Progress                    |
 | ----------------------------------- | --------------------------------- |
-| ![Email & Filename](./images/4.png) | ![Run & Progress](./images/5.png) |
+| ![Email & Filename](./screenshots/4.png) | ![Run & Progress](./screenshots/5.png) |
 
 ## 🚀 Features
 
