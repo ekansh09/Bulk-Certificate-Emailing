@@ -63,14 +63,15 @@ class Worker(QObject):
     finished = pyqtSignal(int, list)
 
     def __init__(self, data_df, template_path, mapping, recipient_col,
-                 email_subj, email_body, filename_pattern, auth_user, auth_pwd):
+                 email_subj, email_body_plain, email_body_html, filename_pattern, auth_user, auth_pwd):
         super().__init__()
         self.data_df = data_df
         self.template_path = template_path
         self.mapping = mapping
         self.recipient_col = recipient_col
         self.email_subj = email_subj.replace('{{', '{').replace('}}', '}')
-        self.email_body = email_body.replace('{{', '{').replace('}}', '}')
+        self.email_body_plain = email_body_plain.replace('{{', '{').replace('}}', '}')
+        self.email_body_html = email_body_html
         self.filename_pattern = filename_pattern.replace('{{', '{').replace('}}', '}')
         self.auth_user = auth_user
         self.auth_pwd = auth_pwd
@@ -171,11 +172,19 @@ class Worker(QObject):
 
         for attempt, (row, context, pdf_path) in enumerate(pdf_paths, start=1):
             recipient = str(row[self.recipient_col])
-            msg = MIMEMultipart()
+            msg = MIMEMultipart('alternative')
             msg['Subject'] = self.email_subj.format(**context)
             msg['From']    = self.auth_user
             msg['To']      = recipient
-            msg.attach(MIMEText(self.email_body.format(**context), 'plain'))
+            msg.attach(MIMEText(self.email_body_plain.format(**context), 'plain'))
+            # msg.attach(MIMEText(self.email_body_html.format(**context), 'html'))
+            html = self.email_body_html
+            for key, col in self.mapping.items():
+                token = f"{{{{{key}}}}}"
+                html = html.replace(token, str(row[col]))
+
+            msg.attach(MIMEText(html, 'html'))
+            
             with open(pdf_path, 'rb') as f:
                 part = MIMEApplication(f.read(), _subtype='pdf')
             part.add_header(
@@ -346,7 +355,12 @@ class CertGenerator(QMainWindow):
         layout.addWidget(self.email_subj)
                 # Email Body
         layout.addWidget(QLabel("Email Body (use {{placeholders}}):"))
-        self.email_body = QTextEdit("Thank you for your support to make it a successful conference, Best Regards, Conf Org.")
+        self.email_body = QTextEdit()
+        self.email_body.setAcceptRichText(True)
+        self.email_body.setHtml(
+            "<p>Thank you for your <b>support</b> to make it a successful conference,</p>"
+            "<p>Best Regards,<br>Conf Org.</p>"
+        )
         layout.addWidget(self.email_body)
         # Filename Pattern
         layout.addWidget(QLabel("Filename Pattern (e.g. certificate_{{name}}.pdf):"))
@@ -552,12 +566,15 @@ class CertGenerator(QMainWindow):
             QMessageBox.warning(self, "Error", "Please select a recipient email column.")
             return
         subj = self.email_subj.text().strip()
-        body = self.email_body.toPlainText().strip()
+
+        body_plain = self.email_body.toPlainText().strip()
+        body_html = self.email_body.toHtml().strip()
+
         fname = self.filename_pattern.text().strip()
         if not subj:
             QMessageBox.warning(self, "Error", "Email subject is required.")
             return
-        if not body:
+        if not body_plain:
             QMessageBox.warning(self, "Error", "Email body is required.")
             return
         if not fname:
@@ -587,7 +604,7 @@ class CertGenerator(QMainWindow):
         # Validate subject tags
         def find_tags(text): return re.findall(r"\{\{(\w+)\}\}", text)
         invalid_subject = set(find_tags(subj)) - set(mapping.keys())
-        invalid_body = set(find_tags(body)) - set(mapping.keys())
+        invalid_body = set(find_tags(body_plain)) - set(mapping.keys())
         invalid_fname = set(find_tags(fname)) - set(mapping.keys())
         errors = []
         if invalid_subject:
@@ -623,7 +640,10 @@ class CertGenerator(QMainWindow):
                    for r in range(self.map_table.rowCount()) if self.map_table.cellWidget(r,1).text().strip()}
         recipient_col = self.cb_recipient.currentText()
         subj = self.email_subj.text().strip()
-        body = self.email_body.toPlainText().strip()
+
+        body_plain = self.email_body.toPlainText().strip()
+        body_html = self.email_body.toHtml().strip()
+
         fname = self.filename_pattern.text().strip()
         self.thread = QThread()
         self.worker = Worker(
@@ -632,7 +652,8 @@ class CertGenerator(QMainWindow):
             mapping=mapping,
             recipient_col=recipient_col,
             email_subj=subj,
-            email_body=body,
+            email_body_plain=body_plain,
+            email_body_html=body_html,
             filename_pattern=fname,
             auth_user=self.auth_user,
             auth_pwd=self.auth_pwd
