@@ -8,16 +8,17 @@ Description: PyQt5-based attachment generation and emailing application.
 
 import sys
 import os
-import tempfile
 import re
 import json
 import time
 import pandas as pd
 import logging
 import mammoth
+import tempfile
+import itertools
+import smtplib
 from docxtpl import DocxTemplate
 from docx2pdf import convert
-import smtplib
 from retrying import retry
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -97,17 +98,25 @@ class Worker(QObject):
         tpl.save(tmp_docx)
 
         # 2. Compute output PDF path
-        filename = self.filename_pattern.format(**context)
-        if not filename.lower().endswith('.pdf'):
-            filename += '.pdf'
+        base_name = self.filename_pattern.format(**context)
+        if not base_name.lower().endswith('.pdf'):
+            base_name += '.pdf'
+
         os.makedirs(CERT_DIR, exist_ok=True)
-        out_path = os.path.join(CERT_DIR, filename)
+
+        final_path = os.path.join(CERT_DIR, base_name)
+
+        name, ext = os.path.splitext(final_path)
+        for i in itertools.count(1):
+            if not os.path.exists(final_path):
+                break
+            final_path = f"{name}_{i}{ext}"
 
         # 3. Try MS Word COM conversion up to 3 times
         last_exc = None
         for attempt in range(1, 4):
             try:
-                convert(tmp_docx, out_path)
+                convert(tmp_docx, final_path)
                 # self.log(f"[PDF] Converted via Word COM on attempt {attempt}")
                 break
             except Exception as e:
@@ -125,7 +134,7 @@ class Worker(QObject):
         except OSError:
             pass
 
-        return out_path
+        return final_path
 
     def run(self):
         total = len(self.data_df)
