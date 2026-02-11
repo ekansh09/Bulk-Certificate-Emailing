@@ -37,15 +37,15 @@
 
 | Home Page | Data & Mapping |
 |:-:|:-:|
-| ![Home](../screenshots/1.png) | ![Data](../screenshots/2.png) |
+| ![Home](./screenshots/1.png) | ![Data](./screenshots/2.png) |
 
 | Template Preview | Email Configuration |
 |:-:|:-:|
-| ![Template](../screenshots/3.png) | ![Email](../screenshots/4.png) |
+| ![Template](./screenshots/3.png) | ![Email](./screenshots/4.png) |
 
 | Processing |
 |:-:|
-| ![Run](../screenshots/5.png) |
+| ![Run](./screenshots/5.png) |
 
 ---
 
