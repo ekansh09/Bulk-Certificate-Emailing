@@ -1,699 +1,432 @@
 """
-Bulk Attachment Personalizer & Emailer
+Bulk Certificate Generator & Emailer — Web Application
 
 Author: Ekansh Chauhan
-Date: June 7, 2025
-Description: PyQt5-based attachment generation and emailing application.
+Description: Flask-based web interface for generating personalized PDF
+             certificates from .docx templates and emailing them in bulk.
 """
 
-import sys
 import os
 import re
+import sys
 import json
 import time
-import pandas as pd
+import shutil
 import logging
-import mammoth
-import tempfile
-import itertools
-import smtplib
-from docxtpl import DocxTemplate
-from docx2pdf import convert
-from retrying import retry
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.application import MIMEApplication
-from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QTabWidget, QWidget, QPushButton, QLabel,
-    QLineEdit, QProgressBar, QTextEdit, QFileDialog, QTableWidget,
-    QTableWidgetItem, QListWidget, QVBoxLayout, QHBoxLayout, QComboBox,
-    QMessageBox, QGroupBox, QFormLayout
+import platform
+import subprocess
+
+from flask import (
+    Flask, render_template, request, jsonify, Response, send_file,
 )
-from PyQt5.QtCore import QUrl
-from PyQt5.QtGui import QDesktopServices
-from PyQt5.QtCore import Qt, QObject, pyqtSignal, QThread
-from PyQt5.QtWebEngineWidgets import QWebEngineView
+import pandas as pd
 
-# Determine application directory (handles PyInstaller)
-if getattr(sys, 'frozen', False):
-    APP_DIR = os.path.dirname(sys.executable)
-else:
-    APP_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_FILE = os.path.join(APP_DIR, 'config.json')
-CERT_DIR = os.path.join(APP_DIR, 'certificates')
-LOG_FILE    = os.path.join(APP_DIR, 'app.log')
+from config import (
+    BASE_DIR, UPLOAD_DIR, CERT_DIR, LOG_FILE, FAILED_FILE,
+    load_config, save_config,
+)
+from services import data_service, template_service, email_service, task_service
 
+# ── Logging ─────────────────────────────────────────────────────────
 logging.basicConfig(
     filename=LOG_FILE,
     level=logging.INFO,
-    format='%(asctime)s %(levelname)s %(message)s'
+    format='%(asctime)s %(levelname)s %(message)s',
 )
-logging.info("=== Application Started ===")
+log = logging.getLogger(__name__)
+
+# ── Flask App ───────────────────────────────────────────────────────
+app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50 MB
+
+# ── In-memory state (single-user application) ──────────────────────
+state = {
+    'data_df': None,
+    'template_path': None,
+}
 
 
-class Worker(QObject):
-    """
-    Handles generation of attachments and email dispatch.
+# ════════════════════════════════════════════════════════════════════
+#  Pages
+# ════════════════════════════════════════════════════════════════════
 
-    Author: Ekansh Chauhan
-    """
-    progress_updated = pyqtSignal(int)
-    count_updated = pyqtSignal(int, int)
-    log_message = pyqtSignal(str)
-    finished = pyqtSignal(int, list)
+@app.route('/')
+def index():
+    return render_template('index.html')
 
-    def __init__(self, data_df, template_path, mapping, recipient_col,
-                 email_subj, email_body_plain, email_body_html, filename_pattern, auth_user, auth_pwd):
-        super().__init__()
-        self.data_df = data_df
-        self.template_path = template_path
-        self.mapping = mapping
-        self.recipient_col = recipient_col
-        self.email_subj = email_subj.replace('{{', '{').replace('}}', '}')
-        self.email_body_plain = email_body_plain.replace('{{', '{').replace('}}', '}')
-        self.email_body_html = email_body_html
-        self.filename_pattern = filename_pattern.replace('{{', '{').replace('}}', '}')
-        self.auth_user = auth_user
-        self.auth_pwd = auth_pwd
 
-    def log(self, message):
-        """Emit to GUI and write to file."""
-        self.log_message.emit(message)
-        logging.info(message)
+# ════════════════════════════════════════════════════════════════════
+#  Setup / Health-check endpoints
+# ════════════════════════════════════════════════════════════════════
 
-    @retry(stop_max_attempt_number=3, wait_fixed=2000)
-    def send_message(self, server, recipient, msg, attempt):
+@app.route('/api/health-check')
+def health_check():
+    """Return a full system health report as JSON."""
+    IS_WIN = platform.system() == 'Windows'
+    checks = []
+
+    # 1. Python version
+    v = sys.version_info
+    py_ok = v >= (3, 8)
+    checks.append({
+        'label': f'Python {v.major}.{v.minor}.{v.micro}',
+        'ok': py_ok,
+        'fix': 'Install Python 3.8 or newer' if not py_ok else None,
+    })
+
+    # 2. Virtual environment
+    venv_dir = os.path.join(BASE_DIR, '.venv')
+    if IS_WIN:
+        venv_python = os.path.join(venv_dir, 'Scripts', 'python.exe')
+    else:
+        venv_python = os.path.join(venv_dir, 'bin', 'python')
+    venv_ok = os.path.isfile(venv_python)
+    checks.append({
+        'label': 'Virtual environment',
+        'ok': venv_ok,
+        'fix': 'Run: python setup.py' if not venv_ok else None,
+    })
+
+    # 3. Required packages
+    required = ['flask', 'pandas', 'openpyxl', 'docxtpl',
+                'docx2pdf', 'mammoth', 'retrying']
+    pkg_missing = []
+    for pkg in required:
         try:
-            server.send_message(msg)
-            self.log(f"[Sent] {recipient}")
-        except Exception as e:
-            self.log(f"[Retry {attempt}] Failed to send to {recipient}: {e}")
-            raise
+            __import__(pkg)
+        except ImportError:
+            pkg_missing.append(pkg)
+    checks.append({
+        'label': 'Python packages',
+        'ok': len(pkg_missing) == 0,
+        'detail': f'Missing: {", ".join(pkg_missing)}' if pkg_missing else 'All installed',
+        'fix': f'Run: pip install {" ".join(pkg_missing)}' if pkg_missing else None,
+    })
 
-
-    def generate_certificate(self, context):
-        # 1. Render .docx template
-        tpl = DocxTemplate(self.template_path)
-        tpl.render(context)
-        tmp_docx = tempfile.NamedTemporaryFile(suffix='.docx', delete=False).name
-        tpl.save(tmp_docx)
-
-        # 2. Compute output PDF path
-        base_name = self.filename_pattern.format(**context)
-        if not base_name.lower().endswith('.pdf'):
-            base_name += '.pdf'
-
-        os.makedirs(CERT_DIR, exist_ok=True)
-
-        final_path = os.path.join(CERT_DIR, base_name)
-
-        name, ext = os.path.splitext(final_path)
-        for i in itertools.count(1):
-            if not os.path.exists(final_path):
-                break
-            final_path = f"{name}_{i}{ext}"
-
-        # 3. Try MS Word COM conversion up to 3 times
-        last_exc = None
-        for attempt in range(1, 4):
-            try:
-                convert(tmp_docx, final_path)
-                # self.log(f"[PDF] Converted via Word COM on attempt {attempt}")
-                break
-            except Exception as e:
-                last_exc = e
-                self.log(f"[PDF] Word COM failed (attempt {attempt}): {e}")
-                time.sleep(2)
-        else:
-            # All retries failed
-            os.remove(tmp_docx)
-            raise RuntimeError(f"Could not convert DOCX → PDF after 3 attempts: {last_exc}")
-
-        # 4. Cleanup and return
+    # 4. Write permissions
+    perm_issues = []
+    for label, d in [('Uploads', UPLOAD_DIR), ('Certificates', CERT_DIR)]:
+        os.makedirs(d, exist_ok=True)
+        test_f = os.path.join(d, '.write_test')
         try:
-            os.remove(tmp_docx)
-        except OSError:
-            pass
+            with open(test_f, 'w') as f:
+                f.write('ok')
+            os.remove(test_f)
+        except (PermissionError, OSError):
+            perm_issues.append(label)
+    checks.append({
+        'label': 'Write permissions',
+        'ok': len(perm_issues) == 0,
+        'detail': f'Cannot write to: {", ".join(perm_issues)}' if perm_issues else 'OK',
+        'fix': ('Run as Administrator' if IS_WIN else 'Check folder permissions') if perm_issues else None,
+    })
 
-        return final_path
-
-    def run(self):
-        total = len(self.data_df)
-        sent, failed = 0, []
-
-        # Phase 1: generate all PDFs first (so SMTP isn't idle)
-        self.log("Generating all certificates...")
-        pdf_paths = []
-        for idx, row in self.data_df.iterrows():
-            context = {ph: str(row[col]) for ph, col in self.mapping.items()}
-            try:
-                pdf = self.generate_certificate(context)
-                pdf_paths.append((row, context, pdf))
-                self.log(f"Generated PDF for {context.get('name','<no-name>')}")
-            except Exception as e:
-                recipient = str(row[self.recipient_col])
-                failed.append((recipient, f"PDF error: {e}"))
-                self.log(f"Failed PDF for {recipient}: {e}")
-
-            processed = len(pdf_paths) + len(failed)
-            pct = int((processed / total) * 100)
-            self.count_updated.emit(processed, total)
-            self.progress_updated.emit(pct)
-
-        # Phase 2: send emails over a single SMTP connection
-        self.log("Starting email dispatch...")
-        if self.auth_user and self.auth_pwd:
-            server = smtplib.SMTP('smtp.gmail.com', 587)
-            server.starttls()
-            server.login(self.auth_user, self.auth_pwd)
+    # 5. PDF backend
+    pdf_ok = False
+    pdf_detail = ''
+    if IS_WIN:
+        try:
+            import win32com.client  # type: ignore
+            pdf_ok = True
+            pdf_detail = 'Microsoft Word (COM)'
+        except Exception:
+            pdf_detail = 'Microsoft Word not found'
+    else:
+        if shutil.which('libreoffice') or shutil.which('soffice'):
+            pdf_ok = True
+            pdf_detail = 'LibreOffice'
+        elif os.path.exists('/Applications/Microsoft Word.app'):
+            pdf_ok = True
+            pdf_detail = 'Microsoft Word'
         else:
-            self.log("Gmail credentials not set; aborting email send.")
-            server = None
+            pdf_detail = 'No converter found'
+    checks.append({
+        'label': 'PDF conversion backend',
+        'ok': pdf_ok,
+        'detail': pdf_detail,
+        'fix': ('Install LibreOffice or Microsoft Word') if not pdf_ok else None,
+    })
 
-        for attempt, (row, context, pdf_path) in enumerate(pdf_paths, start=1):
-            recipient = str(row[self.recipient_col])
-            msg = MIMEMultipart('alternative')
-            msg['Subject'] = self.email_subj.format(**context)
-            msg['From']    = self.auth_user
-            msg['To']      = recipient
-            msg.attach(MIMEText(self.email_body_plain.format(**context), 'plain'))
-            # msg.attach(MIMEText(self.email_body_html.format(**context), 'html'))
-            html = self.email_body_html
-            for key, col in self.mapping.items():
-                token = f"{{{{{key}}}}}"
-                html = html.replace(token, str(row[col]))
+    # 6. Platform info
+    info = {
+        'platform': platform.system(),
+        'release': platform.release(),
+        'arch': platform.machine(),
+        'python': f'{v.major}.{v.minor}.{v.micro}',
+    }
 
-            msg.attach(MIMEText(html, 'html'))
-            
-            with open(pdf_path, 'rb') as f:
-                part = MIMEApplication(f.read(), _subtype='pdf')
-            part.add_header(
-                'Content-Disposition',
-                'attachment',
-                filename=os.path.basename(pdf_path)
-            )
-            msg.attach(part)
+    all_ok = all(c['ok'] for c in checks)
+    return jsonify(checks=checks, info=info, all_ok=all_ok)
 
-            if server:
-                try:
-                    self.send_message(server, recipient, msg, attempt)
-                    sent += 1
-                except Exception as e:
-                    failed.append((recipient, f"Email error: {e}"))
-                time.sleep(1)  # simple rate-limit
 
-            processed = sent + len(failed)
-            pct = int((processed / total) * 100)
-            self.count_updated.emit(processed, total)
-            self.progress_updated.emit(pct)
+# ════════════════════════════════════════════════════════════════════
+#  Data endpoints
+# ════════════════════════════════════════════════════════════════════
 
-        if server:
-            server.quit()
+@app.route('/api/upload-data', methods=['POST'])
+def upload_data():
+    """Upload and parse an Excel/CSV file."""
+    if 'file' not in request.files:
+        return jsonify(error="No file provided"), 400
 
-        # Finalize
-        self.count_updated.emit(total, total)
-        self.progress_updated.emit(100)
-        self.log(f"Finished: {sent}/{total} sent, {len(failed)} failed.")
-        self.finished.emit(sent, failed)
+    f = request.files['file']
+    if not f.filename:
+        return jsonify(error="Empty filename"), 400
 
-class CertGenerator(QMainWindow):
-    """
-    GUI.
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in ('.csv', '.xls', '.xlsx'):
+        return jsonify(error=f"Unsupported file type: {ext}"), 400
 
-    Author: Ekansh Chauhan
-    """
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Conference Certificate Generator")
-        self.resize(1000, 800)
-        self.data_df = None
-        self.template_path = None
-        self.auth_user = ''
-        self.auth_pwd = ''
-        self.thread = None
-        self.worker = None
-        self.load_config()
-        self.setup_ui()
+    path = os.path.join(UPLOAD_DIR, f"data{ext}")
+    f.save(path)
 
-    def load_config(self):
-        if os.path.exists(CONFIG_FILE):
-            try:
-                cfg = json.load(open(CONFIG_FILE))
-                self.auth_user = cfg.get('email', '')
-                self.auth_pwd = cfg.get('app_password', '')
-            except:
-                pass
-
-    def save_config(self):
-        cfg = {'email': self.auth_user, 'app_password': self.auth_pwd}
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(cfg, f)
-
-    def setup_ui(self):
-        self.tabs = QTabWidget()
-        self.tab_data = QWidget(); self.setup_tab_data()
-        self.tab_preview = QWidget(); self.setup_tab_preview()
-        self.tab_auth = QWidget(); self.setup_tab_auth()
-        self.tab_email = QWidget(); self.setup_tab_email()
-        self.tab_run = QWidget(); self.setup_tab_run()
-        for w, title in [
-            (self.tab_data, "Data & Mapping"),
-            (self.tab_preview, "Template Preview"),
-            (self.tab_auth, "Authentication"),
-            (self.tab_email, "Email & Filename"),
-            (self.tab_run, "Run & Progress")]:
-            self.tabs.addTab(w, title)
-        self.setCentralWidget(self.tabs)
-
-    def setup_tab_data(self):
-        layout = QVBoxLayout()
-        # Load button
-        btn_load = QPushButton("Load Excel/CSV")
-        btn_load.clicked.connect(self.load_data)
-        layout.addWidget(btn_load)
-        # Column-to-placeholder mapping table
-        self.map_table = QTableWidget(0, 2)
-        self.map_table.setHorizontalHeaderLabels(['Column', 'Placeholder'])
-        layout.addWidget(QLabel("Map each column to a Jinja placeholder (lowercase, alphanumeric/_):"))
-        layout.addWidget(self.map_table)
-        # Data preview table (max 5 rows)
-        layout.addWidget(QLabel("Data Preview (5 rows):"))
-        self.data_preview = QTableWidget()
-        self.data_preview.setEditTriggers(QTableWidget.NoEditTriggers)
-        layout.addWidget(self.data_preview)
-        # Navigation for preview
-        nav_layout = QHBoxLayout()
-        self.btn_prev = QPushButton("Prev")
-        self.btn_prev.clicked.connect(self.prev_page)
-        self.btn_next = QPushButton("Next")
-        self.btn_next.clicked.connect(self.next_page)
-        nav_layout.addWidget(self.btn_prev)
-        nav_layout.addWidget(self.btn_next)
-        nav_layout.addStretch()
-        layout.addLayout(nav_layout)
-        self.tab_data.setLayout(layout)
-
-    def prev_page(self):
-        if self.current_page > 0:
-            self.current_page -= 1
-            self.update_data_preview()
-
-    def next_page(self):
-        max_page = (len(self.data_df) - 1) // self.rows_per_page
-        if self.current_page < max_page:
-            self.current_page += 1
-            self.update_data_preview()
-
-    def update_data_preview(self):
-        # Show up to rows_per_page rows starting at current_page*rows_per_page
-        start = self.current_page * self.rows_per_page
-        end = min(start + self.rows_per_page, len(self.data_df))
-        chunk = self.data_df.iloc[start:end]
-        # Include index column
-        cols = ["_index_"] + list(self.data_df.columns)
-        self.data_preview.clear()
-        self.data_preview.setColumnCount(len(cols))
-        self.data_preview.setHorizontalHeaderLabels(cols)
-        self.data_preview.setRowCount(len(chunk))
-        for i, (idx, row) in enumerate(chunk.iterrows()):
-            # Index cell
-            self.data_preview.setItem(i, 0, QTableWidgetItem(str(idx)))
-            for j, col in enumerate(self.data_df.columns, start=1):
-                self.data_preview.setItem(i, j, QTableWidgetItem(str(row[col])))
-        # Update nav buttons
-        self.btn_prev.setEnabled(self.current_page > 0)
-        max_page = (len(self.data_df) - 1) // self.rows_per_page
-        self.btn_next.setEnabled(self.current_page < max_page)
-        self.btn_prev.setEnabled(self.current_page > 0)
-        max_page = (len(self.data_df) - 1) // self.rows_per_page
-        self.btn_next.setEnabled(self.current_page < max_page)
-
-    def setup_tab_preview(self):
-        layout = QVBoxLayout()
-        btn_temp = QPushButton("Load .docx Template")
-        btn_temp.clicked.connect(self.load_template)
-        layout.addWidget(btn_temp)
-        zoom_layout = QHBoxLayout()
-        zi = QPushButton("Zoom In"); zo = QPushButton("Zoom Out")
-        zi.clicked.connect(lambda: self.set_zoom(1.2))
-        zo.clicked.connect(lambda: self.set_zoom(0.8))
-        zoom_layout.addWidget(zi); zoom_layout.addWidget(zo); zoom_layout.addStretch()
-        layout.addLayout(zoom_layout)
-        self.preview = QWebEngineView()
-        layout.addWidget(self.preview)
-        self.tab_preview.setLayout(layout)
-
-    def setup_tab_email(self):
-        layout = QVBoxLayout()
-        # Recipient Email Column
-        layout.addWidget(QLabel("Recipient Email Column:"))
-        self.cb_recipient = QComboBox()
-        layout.addWidget(self.cb_recipient)
-        # Email Subject
-        layout.addWidget(QLabel("Email Subject (use {{placeholders}}):"))
-        self.email_subj = QLineEdit("CERTIFICATE")
-        layout.addWidget(self.email_subj)
-                # Email Body
-        layout.addWidget(QLabel("Email Body (use {{placeholders}}):"))
-        self.email_body = QTextEdit()
-        self.email_body.setAcceptRichText(True)
-        self.email_body.setHtml(
-            "<p>Thank you for your <b>support</b> to make it a successful conference,</p>"
-            "<p>Best Regards,<br>Conf Org.</p>"
+    try:
+        df, fixes = data_service.load_data(path)
+        state['data_df'] = df
+        columns = list(df.columns)
+        placeholders = [data_service.default_placeholder(c) for c in columns]
+        preview = data_service.get_preview(df, page=0)
+        log.info("Data loaded: %s (%d rows, %d fixes)", f.filename, len(df), len(fixes))
+        return jsonify(
+            columns=columns,
+            placeholders=placeholders,
+            preview=preview,
+            row_count=len(df),
+            fixes=fixes,
         )
-        layout.addWidget(self.email_body)
-        # Filename Pattern
-        layout.addWidget(QLabel("Filename Pattern (e.g. certificate_{{name}}.pdf):"))
-        self.filename_pattern = QLineEdit("certificate_{{name}}.pdf")
-        layout.addWidget(self.filename_pattern)
-        # Available Placeholders
-        layout.addWidget(QLabel("Available Placeholders:"))
-        self.vars_list = QListWidget()
-        layout.addWidget(self.vars_list)
-        # Preview Option
-        self.chk_preview = QPushButton("Preview first PDF")
-        self.chk_preview.setCheckable(True)
-        layout.addWidget(self.chk_preview)
-        # Dark Mode
-        self.chk_dark = QPushButton("Dark Mode")
-        self.chk_dark.setCheckable(True)
-        self.chk_dark.clicked.connect(self.toggle_theme)
-        layout.addWidget(self.chk_dark)
-        self.tab_email.setLayout(layout)
-
-    def setup_tab_run(self):
-        layout = QVBoxLayout()
-        btn_start = QPushButton("Start Processing")
-        btn_start.clicked.connect(self.start_process)
-        layout.addWidget(btn_start)
-        # Progress bar and count label
-        bar_layout = QHBoxLayout()
-        self.progress = QProgressBar()
-        self.progress.setTextVisible(False)
-        bar_layout.addWidget(self.progress)
-        self.progress_label = QLabel("0/0")
-        bar_layout.addWidget(self.progress_label)
-        layout.addLayout(bar_layout)
-        # Log
-        self.log = QTextEdit()
-        self.log.setReadOnly(True)
-        layout.addWidget(self.log)
-        self.tab_run.setLayout(layout)
-
-    def setup_tab_auth(self):
-        layout = QVBoxLayout()
-        # Gmail Authentication Group
-        auth_group = QGroupBox("Gmail Authentication")
-        form = QFormLayout()
-        # Email address
-        self.auth_email_input = QLineEdit(self.auth_user)
-        self.auth_email_input.setMinimumWidth(300)
-        self.auth_email_input.setPlaceholderText("you@example.com")
-        form.addRow(QLabel("Email Address:"), self.auth_email_input)
-        # App password
-        self.auth_pwd_input = QLineEdit(self.auth_pwd)
-        self.auth_pwd_input.setMinimumWidth(300)
-        self.auth_pwd_input.setEchoMode(QLineEdit.Password)
-        self.auth_pwd_input.setPlaceholderText("App Password (16 chars)")
-        form.addRow(QLabel("App Password:"), self.auth_pwd_input)
-        auth_group.setLayout(form)
-        layout.addWidget(auth_group)
-        # Buttons
-        btn_layout = QHBoxLayout()
-        btn_save = QPushButton("Save Credentials")
-        btn_save.clicked.connect(self.handle_save_auth)
-        btn_test = QPushButton("Test Connection")
-        btn_test.clicked.connect(self.test_connection)
-        btn_layout.addWidget(btn_save)
-        btn_layout.addWidget(btn_test)
-        btn_layout.addStretch()
-        layout.addLayout(btn_layout)
-        # Status label
-        self.auth_status = QLabel("")
-        self.auth_status.setStyleSheet("color: green;")
-        layout.addWidget(self.auth_status)
-        self.tab_auth.setLayout(layout)
+    except Exception as e:
+        log.error("Data load error: %s", e)
+        return jsonify(error=str(e)), 400
 
 
-    def load_data(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select Excel/CSV file", "", "Excel Files (*.xlsx);;CSV Files (*.csv)")
-        if not path:
-            return
-        try:
-            ext = os.path.splitext(path)[1].lower()
-            self.data_df = pd.read_csv(path) if ext == '.csv' else pd.read_excel(path)
-            self.populate_map_table()
-            self.cb_recipient.clear()
-            self.cb_recipient.addItem("")
-            for col in self.data_df.columns:
-                self.cb_recipient.addItem(col)
-            for i in range(1, self.cb_recipient.count()):
-                if 'email' in self.cb_recipient.itemText(i).lower():
-                    self.cb_recipient.setCurrentIndex(i)
-                    break
-            self.log.append(f"Loaded data: {path} ({len(self.data_df)} rows)")
-            self.update_vars_list()
-        except Exception as e:
-            import traceback
-            self.log.append(f"Error loading data: {e}\n{traceback.format_exc()}")
-            # self.log.append(f"Error loading data: {e}")
-
-    def load_data(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select Excel/CSV file", "",
-            "All Excel/CSV Files (*.xlsx *.csv);;Excel Files (*.xlsx);;CSV Files (*.csv)")
-        if not path:
-            return
-        try:
-            ext = os.path.splitext(path)[1].lower()
-            if ext == '.csv':
-                self.data_df = pd.read_csv(path)
-            elif ext in ('.xls', '.xlsx'):
-                self.data_df = pd.read_excel(path)
-            else:
-                raise ValueError("Unsupported file type: %s" % ext)
-            # Populate mapping table
-            self.populate_map_table()
-            # Populate recipient combo
-            self.cb_recipient.clear()
-            self.cb_recipient.addItem("")
-            for col in self.data_df.columns:
-                self.cb_recipient.addItem(col)
-            # Auto-select first 'email' column
-            for i in range(1, self.cb_recipient.count()):
-                if 'email' in self.cb_recipient.itemText(i).lower():
-                    self.cb_recipient.setCurrentIndex(i)
-                    break
-            # Log
-            self.log.append(f"Loaded data: {path} ({len(self.data_df)} rows)")
-            # Initialize pagination
-            self.current_page = 0
-            self.rows_per_page = 5
-            self.update_vars_list()
-            self.update_data_preview()
-        except Exception as e:
-            QMessageBox.critical(self, "Load Error", f"Failed to load file: {e}")
-
-    def populate_map_table(self):
-        self.map_table.setRowCount(0)
-        for col in self.data_df.columns:
-            r = self.map_table.rowCount()
-            self.map_table.insertRow(r)
-            self.map_table.setItem(r, 0, QTableWidgetItem(col))
-            default_ph = col.strip().replace(' ', '_').lower()
-            le = QLineEdit(default_ph)
-            le.textChanged.connect(self.update_vars_list)
-            self.map_table.setCellWidget(r, 1, le)
-
-    def update_vars_list(self):
-        self.vars_list.clear()
-        for r in range(self.map_table.rowCount()):
-            ph = self.map_table.cellWidget(r, 1).text().strip().lower()
-            if ph:
-                self.vars_list.addItem(f"{{{{{ph}}}}}")
-
-    def load_template(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select .docx template", "", "Word Documents (*.docx)")
-        if not path:
-            return
-        self.template_path = path
-        self.log.append(f"Loaded data: {path}")
-        try:
-            with open(path, 'rb') as f:
-                html = mammoth.convert_to_html(f).value
-            self.preview.setHtml(html)
-            self.log.append("Template preview updated.")
-        except Exception as e:
-            self.log.append(f"Preview error: {e}")
-        self.tabs.setCurrentWidget(self.tab_preview)
-
-    def set_zoom(self, factor):
-        self.preview.setZoomFactor(self.preview.zoomFactor() * factor)
-
-    def toggle_theme(self):
-        if self.chk_dark.isChecked():
-            self.setStyleSheet("QWidget{background:#2e2e2e;color:#f0f0f0}")
-        else:
-            self.setStyleSheet("")
-
-    def handle_save_auth(self):
-        self.auth_user = self.auth_email_input.text().strip()
-        self.auth_pwd = self.auth_pwd_input.text().strip()
-        if not self.auth_user or not self.auth_pwd:
-            QMessageBox.warning(self, "Error", "Both email and app password are required.")
-            return
-        self.save_config()
-        QMessageBox.information(self, "Saved", "Credentials saved.")
+@app.route('/api/data-preview')
+def data_preview():
+    """Return a paginated slice of the loaded data."""
+    if state['data_df'] is None:
+        return jsonify(error="No data loaded"), 400
+    page = request.args.get('page', 0, type=int)
+    return jsonify(data_service.get_preview(state['data_df'], page=page))
 
 
-    def test_connection(self):
-        try:
-            server = smtplib.SMTP('smtp.gmail.com', 587)
-            server.starttls()
-            server.login(self.auth_email_input.text().strip(), self.auth_pwd_input.text().strip())
-            server.quit()
-            self.auth_status.setText("Connection successful.")
-            self.auth_status.setStyleSheet("color: green;")
-        except Exception as e:
-            self.auth_status.setText(f"Connection failed: {e}")
-            self.auth_status.setStyleSheet("color: red;")
+# ════════════════════════════════════════════════════════════════════
+#  Template endpoints
+# ════════════════════════════════════════════════════════════════════
 
-    def start_process(self):
-        self.tabs.setCurrentWidget(self.tab_run)
-        if not self.cb_recipient.currentText():
-            QMessageBox.warning(self, "Error", "Please select a recipient email column.")
-            return
-        subj = self.email_subj.text().strip()
+@app.route('/api/upload-template', methods=['POST'])
+def upload_template():
+    """Upload a .docx template, return HTML preview and variables."""
+    if 'file' not in request.files:
+        return jsonify(error="No file provided"), 400
 
-        body_plain = self.email_body.toPlainText().strip()
-        body_html = self.email_body.toHtml().strip()
+    f = request.files['file']
+    if not f.filename or not f.filename.lower().endswith('.docx'):
+        return jsonify(error="Please upload a .docx file"), 400
 
-        fname = self.filename_pattern.text().strip()
-        if not subj:
-            QMessageBox.warning(self, "Error", "Email subject is required.")
-            return
-        if not body_plain:
-            QMessageBox.warning(self, "Error", "Email body is required.")
-            return
-        if not fname:
-            QMessageBox.warning(self, "Error", "Filename pattern is required.")
-            return
-        if self.data_df is None or not self.template_path:
-            self.log.append("Data or template missing!")
-            return
-        mapping = {}
-        for r in range(self.map_table.rowCount()):
-            col = self.map_table.item(r, 0).text()
-            ph = self.map_table.cellWidget(r, 1).text().strip().lower()
-            if ph:
-                mapping[ph] = col
-        tpl = DocxTemplate(self.template_path)
-        tpl_vars = {var.lower() for var in tpl.get_undeclared_template_variables()}
-        wrong_case = [var for var in tpl.get_undeclared_template_variables() if var != var.lower()]
-        missing = tpl_vars - set(mapping.keys())
-        if wrong_case or missing:
-            msg = []
-            if wrong_case:
-                msg.append("Placeholders not lowercase: " + ", ".join(wrong_case))
-            if missing:
-                msg.append("Undefined placeholders in template: " + ", ".join(sorted(missing)))
-            QMessageBox.critical(self, "Template Error", "\n".join(msg))
-            return
-        # Validate subject tags
-        def find_tags(text): return re.findall(r"\{\{(\w+)\}\}", text)
-        invalid_subject = set(find_tags(subj)) - set(mapping.keys())
-        invalid_body = set(find_tags(body_plain)) - set(mapping.keys())
-        invalid_fname = set(find_tags(fname)) - set(mapping.keys())
-        errors = []
-        if invalid_subject:
-            errors.append("Unknown placeholders in Subject: " + ", ".join(sorted(invalid_subject)))
-        if invalid_body:
-            errors.append("Unknown placeholders in Body: " + ", ".join(sorted(invalid_body)))
-        if invalid_fname:
-            errors.append("Unknown placeholders in Filename: " + ", ".join(sorted(invalid_fname)))
-        if errors:
-            QMessageBox.critical(self, "Tag Error", "\n".join(errors))
-            return
-        if self.chk_preview.isChecked():
-            row0 = self.data_df.iloc[0]
-            context0 = {ph: str(row0[col]) for ph, col in mapping.items()}
-            tpl.render(context0)
-            tmp = tempfile.NamedTemporaryFile(suffix='.docx', delete=False).name
-            tpl.save(tmp)
-            pdf0 = os.path.join(os.getcwd(), fname.replace('{{','{').replace('}}','}').format(**context0))
-            if not pdf0.lower().endswith('.pdf'):
-                pdf0 += '.pdf'
-            convert(tmp, pdf0)
-            QDesktopServices.openUrl(QUrl.fromLocalFile(pdf0))
-            resp = QMessageBox.question(
-                self, "Proceed?", "Proceed with emailing certificates?",
-                QMessageBox.Yes | QMessageBox.No
-            )
-            if resp != QMessageBox.Yes:
-                self.log.append("Emailing cancelled by user.")
-                return
-            self.chk_preview.setChecked(False)
-        self.handle_save_auth()
-        mapping = {self.map_table.cellWidget(r,1).text().strip().lower(): self.map_table.item(r,0).text()
-                   for r in range(self.map_table.rowCount()) if self.map_table.cellWidget(r,1).text().strip()}
-        recipient_col = self.cb_recipient.currentText()
-        subj = self.email_subj.text().strip()
+    path = os.path.join(UPLOAD_DIR, 'template.docx')
+    f.save(path)
+    state['template_path'] = path
 
-        body_plain = self.email_body.toPlainText().strip()
-        body_html = self.email_body.toHtml().strip()
+    try:
+        html = template_service.get_preview_html(path)
+        variables = template_service.get_template_variables(path)
+        log.info("Template loaded: %s (vars: %s)", f.filename, variables)
+        return jsonify(preview_html=html, variables=variables)
+    except Exception as e:
+        log.error("Template load error: %s", e)
+        return jsonify(error=str(e)), 400
 
-        fname = self.filename_pattern.text().strip()
-        self.thread = QThread()
-        self.worker = Worker(
-            data_df=self.data_df,
-            template_path=self.template_path,
-            mapping=mapping,
-            recipient_col=recipient_col,
-            email_subj=subj,
-            email_body_plain=body_plain,
-            email_body_html=body_html,
-            filename_pattern=fname,
-            auth_user=self.auth_user,
-            auth_pwd=self.auth_pwd
+
+# ════════════════════════════════════════════════════════════════════
+#  Authentication endpoints
+# ════════════════════════════════════════════════════════════════════
+
+@app.route('/api/credentials')
+def get_credentials():
+    """Return stored credentials (local tool — not a public server)."""
+    cfg = load_config()
+    return jsonify(
+        email=cfg.get('email', ''),
+        password=cfg.get('app_password', ''),
+    )
+
+
+@app.route('/api/save-credentials', methods=['POST'])
+def save_credentials():
+    """Save email credentials to config file."""
+    data = request.get_json()
+    email = data.get('email', '').strip()
+    password = data.get('password', '').strip()
+    if not email or not password:
+        return jsonify(error="Both email and app password are required"), 400
+    save_config({'email': email, 'app_password': password})
+    log.info("Credentials saved for %s", email)
+    return jsonify(success=True)
+
+
+@app.route('/api/test-connection', methods=['POST'])
+def test_connection():
+    """Test SMTP connection with provided credentials."""
+    data = request.get_json()
+    email = data.get('email', '').strip()
+    password = data.get('password', '').strip()
+    if not email or not password:
+        return jsonify(error="Both fields are required"), 400
+    try:
+        email_service.test_connection(email, password)
+        log.info("SMTP test passed for %s", email)
+        return jsonify(success=True, message="Connection successful")
+    except Exception as e:
+        log.warning("SMTP test failed for %s: %s", email, e)
+        return jsonify(success=False, message=str(e)), 400
+
+
+# ════════════════════════════════════════════════════════════════════
+#  Processing endpoints
+# ════════════════════════════════════════════════════════════════════
+
+@app.route('/api/start', methods=['POST'])
+def start_processing():
+    """Validate inputs and launch the background processing task."""
+    if task_service.is_running():
+        return jsonify(error="A task is already running"), 409
+
+    data = request.get_json()
+    df = state.get('data_df')
+    tpl = state.get('template_path')
+
+    if df is None:
+        return jsonify(error="No data loaded"), 400
+    if tpl is None:
+        return jsonify(error="No template loaded"), 400
+
+    mapping = data.get('mapping', {})
+    recipient_col = data.get('recipient_col', '')
+    email_subj = data.get('subject', '')
+    email_body = data.get('body', '')           # plain text fallback
+    email_body_html = data.get('body_html', '') # rich HTML body
+    filename = data.get('filename_pattern', '')
+
+    # ── Basic validation ────────────────────────────────────────
+    if not recipient_col:
+        return jsonify(error="Recipient email column is required"), 400
+    if not email_subj:
+        return jsonify(error="Email subject is required"), 400
+    if not email_body and not email_body_html:
+        return jsonify(error="Email body is required"), 400
+    if not filename:
+        return jsonify(error="Filename pattern is required"), 400
+
+    # If body plain text is empty, strip HTML tags for a fallback
+    if not email_body and email_body_html:
+        email_body = re.sub(r'<[^>]+>', '', email_body_html).strip()
+
+    # Convert {{placeholder}} → {placeholder} for .format()
+    email_subj_fmt = email_subj.replace('{{', '{').replace('}}', '}')
+    email_body_fmt = email_body.replace('{{', '{').replace('}}', '}')
+    filename_fmt = filename.replace('{{', '{').replace('}}', '}')
+
+    # ── Template placeholder validation ─────────────────────────
+    tpl_vars_raw = template_service.get_template_variables(tpl)
+    tpl_vars = {v.lower() for v in tpl_vars_raw}
+    wrong_case = [v for v in tpl_vars_raw if v != v.lower()]
+    missing = tpl_vars - set(mapping.keys())
+
+    errors = []
+    if wrong_case:
+        errors.append(
+            "Template placeholders not lowercase: " + ", ".join(wrong_case)
         )
-        self.worker.moveToThread(self.thread)
-        self.thread.started.connect(self.worker.run)
-        self.worker.count_updated.connect(
-                    lambda proc, tot: self.progress_label.setText(f"{proc}/{tot}"))
-        self.worker.progress_updated.connect(self.progress.setValue)
-        self.worker.log_message.connect(self.log.append)
-        self.worker.finished.connect(lambda s,f: self.on_finished(s,f))
-        self.worker.finished.connect(self.thread.quit)
-        self.worker.finished.connect(self.worker.deleteLater)
-        self.thread.finished.connect(self.thread.deleteLater)
-        self.thread.start()
+    if missing:
+        errors.append(
+            "Unmapped template placeholders: " + ", ".join(sorted(missing))
+        )
 
-    def on_finished(self, sent, failed):
-        """Called when batch processing is done. Writes a CSV of full rows for failures with an error column."""
-        self.log.append(f"Done: {sent}/{len(self.data_df)} sent, {len(failed)} failed.")
-        if failed:
-            import csv
-            failed_col = self.cb_recipient.currentText()
-            # Prepare CSV with all original columns + error column
-            failed_file = os.path.join(APP_DIR, 'failed_list.csv')
-            with open(failed_file, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.writer(f)
-                # Header: original columns + error
-                headers = list(self.data_df.columns) + ['error']
-                writer.writerow(headers)
-                # For each failure, write matching row(s) with error
-                for email, error in failed:
-                    rows = self.data_df[self.data_df[failed_col].astype(str) == email]
-                    for _, row in rows.iterrows():
-                        writer.writerow(list(row.values) + [error])
-            self.log.append(f"Exported {os.path.abspath(failed_file)} with full rows and error column.")
+    # ── Subject / body / filename tag validation ────────────────
+    def find_tags(text):
+        return re.findall(r'\{(\w+)\}', text)
+
+    inv_subj = set(find_tags(email_subj_fmt)) - set(mapping.keys())
+    inv_body = set(find_tags(email_body_fmt)) - set(mapping.keys())
+    inv_fname = set(find_tags(filename_fmt)) - set(mapping.keys())
+
+    if inv_subj:
+        errors.append("Unknown placeholders in subject: " + ", ".join(sorted(inv_subj)))
+    if inv_body:
+        errors.append("Unknown placeholders in body: " + ", ".join(sorted(inv_body)))
+    if inv_fname:
+        errors.append("Unknown placeholders in filename: " + ", ".join(sorted(inv_fname)))
+
+    if errors:
+        return jsonify(error="\n".join(errors)), 400
+
+    # ── Load credentials ────────────────────────────────────────
+    cfg = load_config()
+    auth_user = cfg.get('email', '')
+    auth_pwd = cfg.get('app_password', '')
+
+    # ── Launch background task ──────────────────────────────────
+    task_service.start(
+        data_df=df,
+        template_path=tpl,
+        mapping=mapping,
+        recipient_col=recipient_col,
+        email_subj=email_subj_fmt,
+        email_body_plain=email_body_fmt,
+        email_body_html=email_body_html,
+        filename_pattern=filename_fmt,
+        auth_user=auth_user,
+        auth_pwd=auth_pwd,
+        cert_dir=CERT_DIR,
+        failed_path=FAILED_FILE,
+    )
+
+    log.info("Processing started: %d rows", len(df))
+    return jsonify(success=True, total=len(df))
 
 
+@app.route('/api/progress')
+def progress_stream():
+    """Server-Sent Events endpoint for real-time progress updates."""
+    def generate():
+        ts = task_service.task_state
+        while True:
+            logs = ts.drain_logs()
+            payload = {
+                'progress': ts.progress,
+                'processed': ts.processed,
+                'total': ts.total,
+                'phase': ts.phase,
+                'logs': logs,
+                'complete': ts.complete,
+                'sent': ts.sent,
+                'failed_count': len(ts.failed),
+                'running': ts.running,
+            }
+            yield f"data: {json.dumps(payload)}\n\n"
+            if ts.complete:
+                break
+            time.sleep(0.5)
 
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = CertGenerator()
-    window.show()
-    sys.exit(app.exec_())
+    return Response(
+        generate(),
+        mimetype='text/event-stream',
+        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
+    )
+
+
+@app.route('/api/download-failed')
+def download_failed():
+    """Download the CSV file of failed email rows."""
+    if not os.path.exists(FAILED_FILE):
+        return jsonify(error="No failed list available"), 404
+    return send_file(FAILED_FILE, as_attachment=True, download_name='failed_list.csv')
+
+
+# ════════════════════════════════════════════════════════════════════
+#  Entry point
+# ════════════════════════════════════════════════════════════════════
+
+if __name__ == '__main__':
+    log.info("=== Web Application Started ===")
+    print("Starting Bulk Certificate Emailer at http://127.0.0.1:5050")
+    app.run(debug=True, port=5050, threaded=True)

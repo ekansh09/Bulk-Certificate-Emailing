@@ -1,203 +1,237 @@
-# Bulk Attachment Personalizer & Emailer
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/Flask-3.0+-000000?style=for-the-badge&logo=flask&logoColor=white" alt="Flask">
+  <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
+</p>
 
-A cross-platform PyQt5 application to generate and send personalized PDF (or other) attachments in bulk from a Word template and spreadsheet data via Gmail.
+<h1 align="center">📧 Bulk Certificate Emailer</h1>
 
-**Author:** Ekansh Chauhan
-**Email:** [echauhan09@gmail.com](mailto:echauhan09@gmail.com)
+<p align="center">
+  Generate personalized PDF certificates from Word templates and email them to hundreds of recipients — all from one beautiful web interface.
+</p>
 
-## 🌟 Use Cases
+<p align="center">
+  <a href="#-features">Features</a> •
+  <a href="#-screenshots">Screenshots</a> •
+  <a href="#-quick-start">Quick Start</a> •
+  <a href="#-how-it-works">How It Works</a> •
+  <a href="#%EF%B8%8F-configuration">Configuration</a> •
+  <a href="#-project-structure">Project Structure</a> •
+  <a href="#-troubleshooting">Troubleshooting</a>
+</p>
 
-Whether you’re organizing events or sending personalized attachments at scale, this app lets you:
+---
 
-* 🎟️ Automate certificate issuance for events, workshops, and training sessions.
-* ✉️ Send personalized event invitations, thank-you letters, or newsletters at scale.
-* 📄 Generate individualized billing statements, invoices, or financial summaries.
-* 🆔 Dispatch customized membership cards, badges, or access passes.
-* 🎓 Produce tailored onboarding documents for new employees, students, or volunteers.
-* 📣 Deliver personalized marketing flyers, promotions, or coupons.
-* 💌 Issue customized donation receipts or fundraising acknowledgments.
-* 📊 Create individualized progress reports, performance reviews, or educational transcripts.
+## ✨ Features
 
-Leverage a single template and spreadsheet to streamline any bulk-document workflow—boost productivity, reduce errors, and enhance personalization.
+- **Smart Data Import** — Upload CSV or Excel files with automatic format correction, encoding detection, and column mapping
+- **Template Engine** — Use branded `.docx` Word templates with `{{placeholders}}` that get replaced per recipient
+- **Rich Email Editor** — Compose HTML emails with formatting, images, and signatures via a full WYSIWYG editor
+- **Bulk Processing** — Generate PDFs and send emails with real-time progress tracking and automatic retry on failures
+- **Modern Web UI** — Dark/light theme, responsive design, step-by-step wizard with sidebar navigation
+- **One-Command Setup** — Automated `setup.py` script creates a virtual environment, installs dependencies, and launches the app
 
 ---
 
 ## 📸 Screenshots
 
-Below are screenshots showcasing each main page (tab) and its functionality:
+| Home Page | Data & Mapping |
+|:-:|:-:|
+| ![Home](../screenshots/1.png) | ![Data](../screenshots/2.png) |
 
-| Data Mapping                    | Template Preview                    | Authentication                    |
-| ------------------------------- | ----------------------------------- | --------------------------------- |
-| ![Data Mapping](./screenshots/1.png) | ![Template Preview](./screenshots/2.png) | ![Authentication](./screenshots/3.png) |
+| Template Preview | Email Configuration |
+|:-:|:-:|
+| ![Template](../screenshots/3.png) | ![Email](../screenshots/4.png) |
 
-| Email & Filename                    | Run & Progress                    |
-| ----------------------------------- | --------------------------------- |
-| ![Email & Filename](./screenshots/4.png) | ![Run & Progress](./screenshots/5.png) |
-
-## 🚀 Features
-
-1. **Data Import & Mapping**
-
-   * Load Excel (`.xlsx`) or CSV (`.csv`) contact and content lists.
-   * Map sheet columns to lowercase Jinja-style placeholders (e.g. `name`, `id`, `email`, `role`).
-   * Auto-detect the `email` column for bulk emailing recipients.
-
-2. **Template Preview**
-
-   * Load a `.docx` template containing `{{placeholders}}`.
-   * Live HTML preview with zoom controls before bulk generation.
-
-3. **Authentication**
-
-   * Enter Gmail address and App Password in the **Authentication** tab.
-   * Securely save credentials in `config.json`.
-   * Test SMTP connection to verify bulk emailing capability.
-
-4. **Attachment & Email Configuration**
-
-   * Specify email subject, body, and filename pattern using any mapped placeholders.
-   * Default patterns provided; all fields mandatory for personalized emailing.
-   * Real-time list of available placeholders for easy copy-&-paste.
-
-5. **Preview & Confirm**
-
-   * Optionally generate and open the first attachment (e.g., certificate, letter, report) PDF to verify content and layout before sending in bulk.
-
-6. **Batch Generation & Delivery**
-
-   * Renders each row into a `.docx`, converts to PDF (or retains chosen format), then sends via Gmail SMTP with retry logic.
-   * Progress bar shows percent complete and count (e.g. “23/100”).
-   * Detailed log of successes and failures; export `failed_list.csv`.
-
-7. **Error Handling**
-
-   * Detects unmapped or improperly cased placeholders in the template and email content.
-   * Prevents sending until all tags match.
-   * Catches network or SMTP errors with automatic retries.
-
-8. **Packaging**
-
-   * Package into a standalone executable via PyInstaller for easy distribution.
+| Processing |
+|:-:|
+| ![Run](../screenshots/5.png) |
 
 ---
 
+## 🚀 Quick Start
+
+### Prerequisites
+
+- **Python 3.10+**
+- **LibreOffice** (for `.docx` → PDF conversion) — [Download](https://www.libreoffice.org/download/download/)
+- **Gmail account** with an [App Password](https://myaccount.google.com/apppasswords) enabled
+
+### Setup (One Command)
+
+```bash
+cd web_app
+python setup.py
+```
+
+This will:
+1. Create a Python virtual environment (`.venv`)
+2. Install all dependencies from `requirements.txt`
+3. Verify LibreOffice is installed
+4. Launch the web app at **http://127.0.0.1:5050**
+
+### Manual Setup
+
+```bash
+cd web_app
+python -m venv .venv
+source .venv/bin/activate        # macOS/Linux
+# .venv\Scripts\activate         # Windows
+
+pip install -r requirements.txt
+python app.py
+```
+
+Open **http://127.0.0.1:5050** in your browser.
+
 ---
 
-## 🛠️ Installation
+## 🔄 How It Works
 
-> ⚠️ **Windows users:** For proper permissions, run `app.py` or `run_app.bat` as **Administrator**.
+```
+┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+│  1. Upload   │───▶│  2. Template │───▶│ 3. Configure │───▶│   4. Send    │
+│  CSV/Excel   │    │  .docx file  │    │  Gmail Auth  │    │  Bulk Email  │
+│  with data   │    │  with {{}}   │    │  + Email body│    │  with PDFs   │
+└──────────────┘    └──────────────┘    └──────────────┘    └──────────────┘
+```
 
-1. **Clone the repository**
+1. **Upload Data** — Import your Excel or CSV with names, emails, and other fields. The app auto-detects encoding, fixes formatting issues, and lets you map columns to placeholders.
 
-   ```bash
-   git clone https://github.com/ekansh09/Bulk-Certificate-Emailing.git
-   cd Bulk-Certificate-Emailing
-   ```
+2. **Add Template** — Upload a `.docx` certificate template containing `{{placeholders}}` (e.g., `{{name}}`, `{{event}}`). These get replaced with each recipient's data.
 
-2. **Create a virtual environment & install dependencies**
+3. **Configure** — Enter your Gmail credentials (using an App Password), compose the email subject and body with the rich text editor, and set the PDF filename pattern.
 
-   ```bash
-   python3 -m venv venv
-   # Activate the venv
-   # macOS/Linux:
-   source venv/bin/activate
-   # Windows (PowerShell):
-   # venv\Scripts\Activate
-   pip install -r requirements.txt
-   ```
-
-3. **Run the app**
-
-   * **Directly with Python**
-
-     ```bash
-     python app.py
-     ```
-
-   * **Windows (Optional Batch Script)**
-
-     1. Open `run_app.bat` in a text editor.
-     2. Update the `TARGET_DIR` variable to the full path of your cloned project, e.g.:
-
-        ```bat
-        set "TARGET_DIR=C:\Projects\Bulk-Certificate-Emailing"
-        ```
-     3. Save the file.
-     4. Right-click `run_app.bat` and select **Run as administrator** to launch the app.
-
-4. **(Optional) Package the app**
-
-   ```bash
-   pip install pyinstaller
-   pyinstaller --noconsole --onefile app.py
-   ```
+4. **Send** — Hit start and watch certificates get generated and emailed in real time. Failed emails are automatically retried, and a failure log is available for download.
 
 ---
 
 ## ⚙️ Configuration
 
-1. **Gmail App Password**
+### Gmail App Password
 
-   * Generate a 16-character App Password via your Google Account settings.
-   * Enter it on the **Authentication** tab with your Gmail address, then click **Test Connection** and **Save Credentials**.
+1. Go to [Google Account → App Passwords](https://myaccount.google.com/apppasswords)
+2. Select **Mail** and your device
+3. Copy the 16-character password
+4. Paste it in the **Authentication** step of the app
 
-2. **Spreadsheet**
+> **Note:** You must have 2-Step Verification enabled on your Google account to generate App Passwords.
 
-   * Ensure your sheet has an `email` column plus any other data columns you wish to merge into attachments.
-   * Example: `id, name, report_data, email` or `s_no, name, status, email`.
+### Template Placeholders
 
-3. **Word Template**
+Your `.docx` template should contain Jinja2-style placeholders:
 
-   * Use lowercase Jinja-style tags matching your placeholders, for example:
+```
+Dear {{name}},
 
-     ```text
-     Report for {{name}}
-     Status: {{status}}
-     Details: {{report_data}}
-     ```
+This certificate is awarded to {{name}} for participating in {{event}}
+held on {{date}}.
 
----
+Congratulations!
+```
 
-## 🚀 Usage
+The placeholder names must match the column mappings you configure in Step 1.
 
-1. **Load Data & Map Columns**
+### Email Body Placeholders
 
-   * In **Data & Mapping** tab: click **Load Excel/CSV**, map columns to placeholders.
+The email body also supports `{{placeholder}}` syntax for personalization:
 
-2. **Load Template & Preview**
+```
+Dear {{name}},
 
-   * Switch to **Template Preview**, click **Load .docx Template**, zoom/scroll to inspect.
+Please find attached your certificate for {{event}}.
 
-3. **Authenticate**
-
-   * Go to **Authentication** tab, enter Gmail & App Password, click **Test Connection**, then **Save Credentials**.
-
-4. **Configure Attachment & Email**
-
-   * In **Email & Filename** tab: select `email` column, edit subject/body, set filename pattern (e.g. `Attachment_{{name}}.pdf`).
-
-5. **Preview First Attachment** (optional)
-
-   * Check **Preview first PDF** to generate/open the first personalized attachment before bulk sending.
-
-6. **Start Bulk Generation & Email**
-
-   * Go to **Run & Progress**, click **Start Processing**.
-   * Monitor the progress bar and counter (e.g. “12/100”).
-   * Review live log; export `failed_list.csv` if any deliveries failed.
+Best regards,
+The Organizing Team
+```
 
 ---
 
-## 💡 Troubleshooting
+## 📁 Project Structure
 
-* **Access Errors**: Try running with administrator access.
-* **Tag Errors**: Alerts for undefined or uppercase placeholders.
-* **Slow Performance**: Disable preview or reduce batch size.
-* **Packaging Issues**: See [PyInstaller docs](https://pyinstaller.org).
+```
+web_app/
+├── app.py                 # Flask server & API routes
+├── setup.py               # One-command setup & bootstrap
+├── config.py              # Path management & config I/O
+├── config.json            # Saved credentials & settings
+├── requirements.txt       # Python dependencies
+├── README.md              # This file
+├── .gitignore             # Git ignore rules
+├── services/
+│   ├── data_service.py    # CSV/Excel parsing & auto-correction
+│   ├── template_service.py# .docx template processing & PDF generation
+│   ├── email_service.py   # Gmail SMTP sending with retry
+│   └── task_service.py    # Background task orchestration & SSE progress
+├── templates/
+│   └── index.html         # Single-page application
+├── static/
+│   ├── css/style.css      # Production styles (dark/light theme)
+│   └── js/app.js          # Frontend logic & state management
+├── uploads/               # Temporary uploaded files
+└── certificates/          # Generated PDF certificates
+```
+
+---
+
+## 📦 Dependencies
+
+| Package | Purpose |
+|---------|---------|
+| `flask` | Web framework & API server |
+| `pandas` | Data manipulation & CSV/Excel parsing |
+| `openpyxl` | Excel file reading |
+| `docxtpl` | Word template rendering with Jinja2 |
+| `docx2pdf` | PDF conversion via LibreOffice |
+| `mammoth` | .docx → HTML preview conversion |
+| `retrying` | Automatic retry for failed email sends |
+
+---
+
+## 🔧 Troubleshooting
+
+### "LibreOffice not found"
+Install LibreOffice from [libreoffice.org](https://www.libreoffice.org/download/download/). On macOS:
+```bash
+brew install --cask libreoffice
+```
+
+### "SMTP Authentication Error"
+- Ensure you're using an **App Password**, not your regular Gmail password
+- Verify 2-Step Verification is enabled on your Google account
+- Check that "Less secure app access" is not blocking the connection
+
+### "ModuleNotFoundError"
+Run the setup script to install all dependencies:
+```bash
+cd web_app
+python setup.py
+```
+
+### Port Already in Use
+The app runs on port **5050** by default. If it's occupied, edit the last line in `app.py`:
+```python
+app.run(debug=True, port=YOUR_PORT, threaded=True)
+```
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ---
 
 ## 📄 License
 
-This project is licensed under the MIT License.
-© Ekansh Chauhan
+This project is open source and available under the [MIT License](LICENSE).
+
+---
+
+<p align="center">
+  Made with ❤️ by <strong>Ekansh Chauhan</strong>
+</p>

@@ -1,4 +1,43 @@
-/config.json
-/failed_list.csv
-/certificates/
-/app.log
+# ── Python ──────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ── Virtual Environment ────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── App Runtime Files ──────────────────────────
+config.json
+app.log
+failed_list.csv
+
+# ── Generated Outputs ─────────────────────────
+certificates/
+uploads/
+
+# ── OS Files ───────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── IDE / Editor ───────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+
+# ── Misc ───────────────────────────────────────
+*.log
+*.bak
+*.tmp

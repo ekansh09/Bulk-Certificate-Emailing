@@ -1,8 +1,7 @@
-pandas
-mammoth
-docxtpl
-docx2pdf
-retrying
-PyQt5
-PyQtWebEngine
-openpyxl
+flask>=3.0
+pandas>=2.0
+openpyxl>=3.1
+docxtpl>=0.16
+docx2pdf>=0.1.8
+mammoth>=1.6
+retrying>=1.3
