@@ -1,234 +1,180 @@
-<p align="center">
-  <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/Flask-3.0+-000000?style=for-the-badge&logo=flask&logoColor=white" alt="Flask">
-  <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
-</p>
-
 <h1 align="center">📧 Bulk Certificate Emailer</h1>
 
 <p align="center">
-  Generate personalized PDF certificates from Word templates and email them to hundreds of recipients — all from one beautiful web interface.
+  <strong>Send personalized certificates to hundreds of people — in minutes, not hours.</strong><br>
+  No coding needed. Just your data, a Word template, and a Gmail account.
 </p>
 
 <p align="center">
-  <a href="#-features">Features</a> •
-  <a href="#-screenshots">Screenshots</a> •
-  <a href="#-quick-start">Quick Start</a> •
-  <a href="#-how-it-works">How It Works</a> •
-  <a href="#%EF%B8%8F-configuration">Configuration</a> •
-  <a href="#-project-structure">Project Structure</a> •
-  <a href="#-troubleshooting">Troubleshooting</a>
+  <img src="https://img.shields.io/badge/Works_on-Windows_&_macOS-blue?style=for-the-badge" alt="Platform">
+  <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
+</p>
+
+<p align="center">
+  <a href="#-see-it-in-action">See It in Action</a> •
+  <a href="#-get-started-in-2-minutes">Get Started</a> •
+  <a href="#-how-to-use">How to Use</a> •
+  <a href="#-need-help">Need Help?</a>
 </p>
 
 ---
 
-## ✨ Features
+## 💡 What Does It Do?
 
-- **Smart Data Import** — Upload CSV or Excel files with automatic format correction, encoding detection, and column mapping
-- **Template Engine** — Use branded `.docx` Word templates with `{{placeholders}}` that get replaced per recipient
-- **Rich Email Editor** — Compose HTML emails with formatting, images, and signatures via a full WYSIWYG editor
-- **Bulk Processing** — Generate PDFs and send emails with real-time progress tracking and automatic retry on failures
-- **Modern Web UI** — Dark/light theme, responsive design, step-by-step wizard with sidebar navigation
-- **One-Command Setup** — Automated `setup.py` script creates a virtual environment, installs dependencies, and launches the app
+Imagine you ran a workshop with 200 attendees, and you need to send each one a **personalized PDF certificate** via email. Doing it manually? That's hours of copy-paste nightmare.
+
+With this app, you:
+1. Drop in your **Excel/CSV** with names & emails
+2. Upload your **Word certificate template**
+3. Write one email, hit **Send**
+4. ☕ Grab a coffee — it handles the rest
+
+Each person gets their own certificate with their name filled in, converted to PDF, and delivered to their inbox.
 
 ---
 
-## 📸 Screenshots
+## ✨ Why You'll Love It
 
-| Home Page | Data & Mapping |
+| | |
+|---|---|
+| 🖱️ **No terminal, no commands** | Just double-click a file to launch |
+| 📝 **Use your own Word template** | Design your certificate in Word — the app fills in names automatically |
+| 📊 **Works with Excel & CSV** | Drop your spreadsheet in, map the columns, done |
+| ✉️ **Beautiful emails** | Rich text editor for your email body — add formatting, images, links |
+| 📡 **Live progress** | Watch certificates being generated and emailed in real time |
+| 🔄 **Auto-retry** | If an email fails, it tries again automatically |
+| 🌙 **Dark & light mode** | Easy on the eyes, whichever you prefer |
+
+---
+
+## 📸 See It in Action
+
+| Home | Upload & Map Your Data |
 |:-:|:-:|
 | ![Home](./screenshots/1.png) | ![Data](./screenshots/2.png) |
 
-| Template Preview | Email Configuration |
+| Preview Your Certificate | Compose Your Email |
 |:-:|:-:|
 | ![Template](./screenshots/3.png) | ![Email](./screenshots/4.png) |
 
-| Processing |
+| Watch It Send |
 |:-:|
 | ![Run](./screenshots/5.png) |
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Get Started in 2 Minutes
 
-### Prerequisites
+### What You'll Need
 
-- **Python 3.10+**
-- **LibreOffice** (for `.docx` → PDF conversion) — [Download](https://www.libreoffice.org/download/download/)
-- **Gmail account** with an [App Password](https://myaccount.google.com/apppasswords) enabled
+Before running the app, make sure you have these two things installed:
 
-### Setup (One Command)
+1. **Python 3.10 or newer** — [Download here](https://www.python.org/downloads/)
+   > ⚠️ **Windows users:** Check **"Add Python to PATH"** during installation — this is important!
 
-```bash
-cd web_app
-python setup.py
-```
+2. **LibreOffice** (free) — needed to convert Word files to PDF — [Download here](https://www.libreoffice.org/download/download/)
 
-This will:
-1. Create a Python virtual environment (`.venv`)
-2. Install all dependencies from `requirements.txt`
-3. Verify LibreOffice is installed
-4. Launch the web app at **http://127.0.0.1:5050**
+### Launch the App
 
-### Manual Setup
+| If you're on... | Double-click this file |
+|:-:|:-:|
+| 🍎 **macOS** | `start.command` |
+| 🪟 **Windows** | `start.bat` |
 
-```bash
-cd web_app
-python -m venv .venv
-source .venv/bin/activate        # macOS/Linux
-# .venv\Scripts\activate         # Windows
+That's it. The app will set itself up automatically and open in your browser.
 
-pip install -r requirements.txt
-python app.py
-```
-
-Open **http://127.0.0.1:5050** in your browser.
+> First launch takes a minute to install everything. After that, it starts instantly.
 
 ---
 
-## 🔄 How It Works
+## 📖 How to Use
 
-```
-┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│  1. Upload   │───▶│  2. Template │───▶│ 3. Configure │───▶│   4. Send    │
-│  CSV/Excel   │    │  .docx file  │    │  Gmail Auth  │    │  Bulk Email  │
-│  with data   │    │  with {{}}   │    │  + Email body│    │  with PDFs   │
-└──────────────┘    └──────────────┘    └──────────────┘    └──────────────┘
-```
+### Step 1 — Prepare Your Data
 
-1. **Upload Data** — Import your Excel or CSV with names, emails, and other fields. The app auto-detects encoding, fixes formatting issues, and lets you map columns to placeholders.
+Create an Excel or CSV file with at least these columns:
 
-2. **Add Template** — Upload a `.docx` certificate template containing `{{placeholders}}` (e.g., `{{name}}`, `{{event}}`). These get replaced with each recipient's data.
+| Name | Email | Event | Date |
+|------|-------|-------|------|
+| Alice Johnson | alice@email.com | AI Workshop | Jan 15, 2026 |
+| Bob Smith | bob@email.com | AI Workshop | Jan 15, 2026 |
 
-3. **Configure** — Enter your Gmail credentials (using an App Password), compose the email subject and body with the rich text editor, and set the PDF filename pattern.
+You can have as many columns as you want — you'll map them in the app.
 
-4. **Send** — Hit start and watch certificates get generated and emailed in real time. Failed emails are automatically retried, and a failure log is available for download.
+### Step 2 — Create Your Certificate Template
 
----
+Design your certificate in **Microsoft Word** (`.docx`). Wherever you want personalized data, use `{{column_name}}` placeholders:
 
-## ⚙️ Configuration
+> *This certificate is awarded to **{{Name}}** for completing **{{Event}}** on **{{Date}}**.*
 
-### Gmail App Password
+The names inside `{{ }}` should match your spreadsheet column headers.
 
-1. Go to [Google Account → App Passwords](https://myaccount.google.com/apppasswords)
-2. Select **Mail** and your device
-3. Copy the 16-character password
-4. Paste it in the **Authentication** step of the app
+### Step 3 — Set Up Gmail
 
-> **Note:** You must have 2-Step Verification enabled on your Google account to generate App Passwords.
+The app sends emails through your Gmail account. You'll need an **App Password** (not your regular password):
 
-### Template Placeholders
+1. Open [Google App Passwords](https://myaccount.google.com/apppasswords)  
+   *(you need 2-Step Verification enabled on your Google account)*
+2. Create a new app password
+3. Copy the 16-character code — you'll paste it in the app
 
-Your `.docx` template should contain Jinja2-style placeholders:
+### Step 4 — Send!
 
-```
-Dear {{name}},
+In the app:
+1. **Upload** your spreadsheet → map columns to placeholders
+2. **Upload** your Word certificate template → preview it
+3. **Enter** your Gmail + App Password → compose your email
+4. **Hit Send** → watch the progress bar as certificates fly out 🚀
 
-This certificate is awarded to {{name}} for participating in {{event}}
-held on {{date}}.
-
-Congratulations!
-```
-
-The placeholder names must match the column mappings you configure in Step 1.
-
-### Email Body Placeholders
-
-The email body also supports `{{placeholder}}` syntax for personalization:
-
-```
-Dear {{name}},
-
-Please find attached your certificate for {{event}}.
-
-Best regards,
-The Organizing Team
-```
+Failed emails are retried automatically. You can also download a list of any that didn't go through.
 
 ---
 
-## 📁 Project Structure
+## 🛠 Need Help?
 
+<details>
+<summary><strong>"LibreOffice not found"</strong></summary>
+
+Download and install LibreOffice from [libreoffice.org](https://www.libreoffice.org/download/download/).
+
+**macOS shortcut** (if you have Homebrew):
 ```
-web_app/
-├── app.py                 # Flask server & API routes
-├── setup.py               # One-command setup & bootstrap
-├── config.py              # Path management & config I/O
-├── config.json            # Saved credentials & settings
-├── requirements.txt       # Python dependencies
-├── README.md              # This file
-├── .gitignore             # Git ignore rules
-├── services/
-│   ├── data_service.py    # CSV/Excel parsing & auto-correction
-│   ├── template_service.py# .docx template processing & PDF generation
-│   ├── email_service.py   # Gmail SMTP sending with retry
-│   └── task_service.py    # Background task orchestration & SSE progress
-├── templates/
-│   └── index.html         # Single-page application
-├── static/
-│   ├── css/style.css      # Production styles (dark/light theme)
-│   └── js/app.js          # Frontend logic & state management
-├── uploads/               # Temporary uploaded files
-└── certificates/          # Generated PDF certificates
-```
-
----
-
-## 📦 Dependencies
-
-| Package | Purpose |
-|---------|---------|
-| `flask` | Web framework & API server |
-| `pandas` | Data manipulation & CSV/Excel parsing |
-| `openpyxl` | Excel file reading |
-| `docxtpl` | Word template rendering with Jinja2 |
-| `docx2pdf` | PDF conversion via LibreOffice |
-| `mammoth` | .docx → HTML preview conversion |
-| `retrying` | Automatic retry for failed email sends |
-
----
-
-## 🔧 Troubleshooting
-
-### "LibreOffice not found"
-Install LibreOffice from [libreoffice.org](https://www.libreoffice.org/download/download/). On macOS:
-```bash
 brew install --cask libreoffice
 ```
+</details>
 
-### "SMTP Authentication Error"
-- Ensure you're using an **App Password**, not your regular Gmail password
-- Verify 2-Step Verification is enabled on your Google account
-- Check that "Less secure app access" is not blocking the connection
+<details>
+<summary><strong>"SMTP Authentication Error" or email won't send</strong></summary>
 
-### "ModuleNotFoundError"
-Run the setup script to install all dependencies:
-```bash
-cd web_app
-python setup.py
-```
+- Make sure you're using an **App Password**, not your regular Gmail password
+- You need **2-Step Verification** turned on in your Google account first
+- Try generating a fresh App Password if the old one doesn't work
+</details>
 
-### Port Already in Use
-The app runs on port **5050** by default. If it's occupied, edit the last line in `app.py`:
-```python
-app.run(debug=True, port=YOUR_PORT, threaded=True)
-```
+<details>
+<summary><strong>The app won't start</strong></summary>
+
+- Make sure **Python 3.10+** is installed: open a terminal and type `python --version`
+- **Windows:** Did you check "Add Python to PATH" when installing? If not, reinstall Python and check that box
+- Try running `python setup.py` in a terminal from the project folder for detailed error messages
+</details>
+
+<details>
+<summary><strong>Port already in use</strong></summary>
+
+If something else is already using port 5050, you'll see an error. Close the other app or change the port in `app.py` (last line — change `5050` to any free number like `8080`).
+</details>
 
 ---
 
 ## 🤝 Contributing
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+Contributions are welcome! Fork the repo, create a branch, and open a Pull Request.
 
 ---
 
 ## 📄 License
 
-This project is open source and available under the [MIT License](LICENSE).
+Open source under the [MIT License](LICENSE).
 
 ---
 

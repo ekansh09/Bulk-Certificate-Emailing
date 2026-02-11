@@ -426,7 +426,31 @@ def download_failed():
 #  Entry point
 # ════════════════════════════════════════════════════════════════════
 
+def _open_browser():
+    """Open the app in the default browser (called once after server starts)."""
+    import webbrowser
+    import threading
+
+    def _wait_and_open():
+        """Wait until the server is accepting connections, then open the browser."""
+        import socket, time
+        for _ in range(30):          # try for up to 15 seconds
+            try:
+                with socket.create_connection(('127.0.0.1', 5050), timeout=1):
+                    break
+            except OSError:
+                time.sleep(0.5)
+        webbrowser.open('http://127.0.0.1:5050')
+
+    threading.Thread(target=_wait_and_open, daemon=True).start()
+
+
 if __name__ == '__main__':
     log.info("=== Web Application Started ===")
     print("Starting Bulk Certificate Emailer at http://127.0.0.1:5050")
+
+    # Only auto-open browser on the first run (debug mode spawns a reloader child)
+    if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+        _open_browser()
+
     app.run(debug=True, port=5050, threaded=True)
