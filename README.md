@@ -65,16 +65,26 @@ Each person gets their own certificate with their name filled in, converted to P
 
 ## 🚀 Get Started in 2 Minutes
 
-### What You'll Need
+### 1. Download the App
 
-Before running the app, make sure you have these two things installed:
+[⬇️ **Download ZIP**](../../archive/refs/heads/main.zip) and extract it anywhere on your computer.
+
+Or if you use Git:
+```
+git clone https://github.com/EkanshChauhan/Bulk-Certificate-Emailing.git
+```
+
+### 2. Install Prerequisites
+
+> Already have Python and Microsoft Word (or LibreOffice)? Skip to [Launch the App](#3-launch-the-app)!
 
 1. **Python 3.10 or newer** — [Download here](https://www.python.org/downloads/)
    > ⚠️ **Windows users:** Check **"Add Python to PATH"** during installation — this is important!
 
-2. **LibreOffice** (free) — needed to convert Word files to PDF — [Download here](https://www.libreoffice.org/download/download/)
+2. **Microsoft Word** or **LibreOffice** (either one works) — needed to convert your certificate to PDF
+   - Most computers already have Word installed. If not, [get LibreOffice for free](https://www.libreoffice.org/download/download/).
 
-### Launch the App
+### 3. Launch the App
 
 | If you're on... | Double-click this file |
 |:-:|:-:|
@@ -132,7 +142,7 @@ Failed emails are retried automatically. You can also download a list of any tha
 ## 🛠 Need Help?
 
 <details>
-<summary><strong>"LibreOffice not found"</strong></summary>
+<summary><strong>"Microsoft Word / LibreOffice not found"</strong></summary>
 
 Download and install LibreOffice from [libreoffice.org](https://www.libreoffice.org/download/download/).
 
