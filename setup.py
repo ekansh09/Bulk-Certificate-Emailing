@@ -137,7 +137,7 @@ def check_packages():
     """Check which required packages are installed in the venv."""
     try:
         result = run(
-            [VENV_PIP, 'list', '--format=json'],
+            [VENV_PYTHON, '-m', 'pip', 'list', '--format=json'],
             capture=True, check=True,
         )
         installed = {
@@ -162,8 +162,12 @@ def install_packages():
     """Install all requirements from requirements.txt."""
     log_info("Installing packages from requirements.txt…")
     try:
-        run([VENV_PIP, 'install', '--upgrade', 'pip'], capture=True)
-        run([VENV_PIP, 'install', '-r', REQ_FILE])
+        # Upgrade pip itself (non-fatal if it fails, e.g. file-lock on Windows)
+        try:
+            run([VENV_PYTHON, '-m', 'pip', 'install', '--upgrade', 'pip'], capture=True)
+        except subprocess.CalledProcessError:
+            log_warn("Could not upgrade pip (continuing with current version)")
+        run([VENV_PYTHON, '-m', 'pip', 'install', '-r', REQ_FILE])
         log_ok("All packages installed")
         return True
     except subprocess.CalledProcessError as e:
