@@ -571,10 +571,57 @@ function refreshChecklist() {
         li.innerHTML = `<span class="check-icon">${c.ok ? '✅' : '❌'}</span> ${escHtml(c.text)}`;
         list.appendChild(li);
     });
+
+    // Auto-run validation when step 5 is opened
+    runValidation();
+}
+
+async function runValidation() {
+    const container = document.getElementById('validation-results');
+    if (!state.dataLoaded || !document.getElementById('filename-pattern').value.trim()) {
+        container.classList.add('hidden');
+        return;
+    }
+
+    rebuildMapping();
+
+    try {
+        const res = await fetch('/api/validate-rows', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                mapping: state.mapping,
+                filename_pattern: document.getElementById('filename-pattern').value.trim(),
+            }),
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+            container.classList.add('hidden');
+            return;
+        }
+
+        if (data.issues.length === 0) {
+            container.classList.remove('hidden');
+            container.innerHTML = '<p class="status-msg success" style="display:block;">✅ All rows have valid filename characters.</p>';
+        } else {
+            container.classList.remove('hidden');
+            let html = `<p class="status-msg warning" style="display:block;">⚠️ ${data.issues.length} row(s) contain characters that will be auto-replaced with "_" in filenames:</p>`;
+            html += '<div class="table-wrap" style="max-height:200px;overflow:auto;"><table class="tbl"><thead><tr><th>Row</th><th>Field</th><th>Value</th><th>Bad Chars</th></tr></thead><tbody>';
+            data.issues.forEach(i => {
+                html += `<tr><td>${i.row}</td><td>${escHtml(i.field)}</td><td>${escHtml(i.value)}</td><td><code>${escHtml(i.chars)}</code></td></tr>`;
+            });
+            html += '</tbody></table></div>';
+            container.innerHTML = html;
+            toast(`${data.issues.length} row(s) have special characters — they will be auto-sanitized`, 'info');
+        }
+    } catch (e) {
+        container.classList.add('hidden');
+    }
 }
 
 // ── Processing ─────────────────────────────────────────────────────
-async function startProcessing() {
+async function startProcessing(mode = 'both') {
     rebuildMapping();
 
     const bodyHtml = getEditorHtml();
@@ -587,6 +634,7 @@ async function startProcessing() {
           '</body></html>';
 
     const payload = {
+        mode: mode,
         mapping: state.mapping,
         recipient_col: document.getElementById('recipient-col').value,
         subject: document.getElementById('email-subject').value.trim(),
@@ -595,9 +643,7 @@ async function startProcessing() {
         filename_pattern: document.getElementById('filename-pattern').value.trim(),
     };
 
-    const startBtn = document.getElementById('start-btn');
-    startBtn.disabled = true;
-    startBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> Starting…';
+    setModeButtonsDisabled(true);
 
     try {
         const res = await fetch('/api/start', {
@@ -609,27 +655,36 @@ async function startProcessing() {
 
         if (!res.ok) {
             toast(data.error || 'Start failed', 'error');
-            resetStartBtn(startBtn);
+            setModeButtonsDisabled(false);
             return;
         }
 
+        state.currentMode = mode;
         show('progress-section');
         show('log-card');
         hide('results-card');
         clearLog();
 
-        toast(`Processing ${data.total} rows…`, 'info');
+        const modeLabels = { generate: 'Generating', send: 'Sending', both: 'Processing' };
+        toast(`${modeLabels[mode]} ${data.total} rows…`, 'info');
         connectProgress();
 
     } catch (e) {
         toast('Network error: ' + e.message, 'error');
-        resetStartBtn(startBtn);
+        setModeButtonsDisabled(false);
     }
 }
 
+function setModeButtonsDisabled(disabled) {
+    ['generate-btn', 'send-btn', 'both-btn'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) btn.disabled = disabled;
+    });
+}
+
 function resetStartBtn(btn) {
-    btn.disabled = false;
-    btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg> Start Processing';
+    // legacy compat — now resets all mode buttons
+    setModeButtonsDisabled(false);
 }
 
 function connectProgress() {
@@ -647,6 +702,7 @@ function connectProgress() {
 
         const phaseMap = {
             generating: '📄 Generating certificates…',
+            locating: '🔍 Locating existing certificates…',
             sending: '📧 Sending emails…',
             complete: '✅ Complete',
             idle: 'Preparing…',
@@ -666,14 +722,14 @@ function connectProgress() {
             es.close();
             state.eventSource = null;
             showResults(d);
-            resetStartBtn(document.getElementById('start-btn'));
+            setModeButtonsDisabled(false);
         }
     };
 
     es.onerror = () => {
         es.close();
         state.eventSource = null;
-        resetStartBtn(document.getElementById('start-btn'));
+        setModeButtonsDisabled(false);
         toast('Connection to server lost. Check that the server is running.', 'error');
     };
 }
@@ -688,10 +744,25 @@ function getLogClass(msg) {
 function showResults(data) {
     show('results-card');
     const summary = document.getElementById('results-summary');
-    summary.innerHTML = `
-        <p>Sent: <span class="result-sent">${data.sent}</span> / ${data.total}</p>
-        <p>Failed: <span class="result-failed">${data.failed_count}</span></p>
-    `;
+    const mode = state.currentMode || 'both';
+
+    if (mode === 'generate') {
+        const generated = data.total - data.failed_count;
+        summary.innerHTML = `
+            <p>Generated: <span class="result-sent">${generated}</span> / ${data.total} certificates</p>
+            <p>Failed: <span class="result-failed">${data.failed_count}</span></p>
+        `;
+    } else if (mode === 'send') {
+        summary.innerHTML = `
+            <p>Sent: <span class="result-sent">${data.sent}</span> / ${data.total}</p>
+            <p>Failed: <span class="result-failed">${data.failed_count}</span></p>
+        `;
+    } else {
+        summary.innerHTML = `
+            <p>Sent: <span class="result-sent">${data.sent}</span> / ${data.total}</p>
+            <p>Failed: <span class="result-failed">${data.failed_count}</span></p>
+        `;
+    }
 
     const dlBtn = document.getElementById('download-failed-btn');
     if (data.failed_count > 0) {
@@ -700,8 +771,19 @@ function showResults(data) {
         dlBtn.classList.add('hidden');
     }
 
+    // Show "Now Send Emails" button after a generate-only run
+    const sendAfterBtn = document.getElementById('send-after-generate-btn');
+    if (mode === 'generate' && data.failed_count < data.total) {
+        sendAfterBtn.classList.remove('hidden');
+    } else {
+        sendAfterBtn.classList.add('hidden');
+    }
+
+    const modeLabels = { generate: 'generated', send: 'sent', both: 'processed' };
     toast(
-        `Done! ${data.sent}/${data.total} sent, ${data.failed_count} failed.`,
+        `Done! ${mode === 'generate'
+            ? (data.total - data.failed_count) + '/' + data.total + ' generated'
+            : data.sent + '/' + data.total + ' sent'}, ${data.failed_count} failed.`,
         data.failed_count > 0 ? 'error' : 'success'
     );
 }

@@ -284,9 +284,32 @@ def test_connection():
 #  Processing endpoints
 # ════════════════════════════════════════════════════════════════════
 
+@app.route('/api/validate-rows', methods=['POST'])
+def validate_rows():
+    """Scan all rows for characters that would cause filename issues."""
+    data = request.get_json()
+    df = state.get('data_df')
+    if df is None:
+        return jsonify(error="No data loaded"), 400
+
+    mapping = data.get('mapping', {})
+    filename = data.get('filename_pattern', '')
+    if not filename:
+        return jsonify(error="Filename pattern is required"), 400
+
+    issues = template_service.validate_rows(df, mapping, filename)
+    return jsonify(issues=issues, total=len(df))
+
+
 @app.route('/api/start', methods=['POST'])
 def start_processing():
-    """Validate inputs and launch the background processing task."""
+    """Validate inputs and launch the background processing task.
+
+    Accepts a JSON ``mode`` field:
+      - ``'generate'`` — only generate PDFs (no email)
+      - ``'send'``     — only send emails (PDFs must exist)
+      - ``'both'``     — generate then send (default)
+    """
     if task_service.is_running():
         return jsonify(error="A task is already running"), 409
 
@@ -294,9 +317,13 @@ def start_processing():
     df = state.get('data_df')
     tpl = state.get('template_path')
 
+    mode = data.get('mode', 'both')
+    if mode not in ('generate', 'send', 'both'):
+        return jsonify(error="Invalid mode"), 400
+
     if df is None:
         return jsonify(error="No data loaded"), 400
-    if tpl is None:
+    if tpl is None and mode in ('generate', 'both'):
         return jsonify(error="No template loaded"), 400
 
     mapping = data.get('mapping', {})
@@ -307,11 +334,11 @@ def start_processing():
     filename = data.get('filename_pattern', '')
 
     # ── Basic validation ────────────────────────────────────────
-    if not recipient_col:
+    if not recipient_col and mode in ('send', 'both'):
         return jsonify(error="Recipient email column is required"), 400
-    if not email_subj:
+    if not email_subj and mode in ('send', 'both'):
         return jsonify(error="Email subject is required"), 400
-    if not email_body and not email_body_html:
+    if not email_body and not email_body_html and mode in ('send', 'both'):
         return jsonify(error="Email body is required"), 400
     if not filename:
         return jsonify(error="Filename pattern is required"), 400
@@ -325,44 +352,49 @@ def start_processing():
     email_body_fmt = email_body.replace('{{', '{').replace('}}', '}')
     filename_fmt = filename.replace('{{', '{').replace('}}', '}')
 
-    # ── Template placeholder validation ─────────────────────────
-    tpl_vars_raw = template_service.get_template_variables(tpl)
-    tpl_vars = {v.lower() for v in tpl_vars_raw}
-    wrong_case = [v for v in tpl_vars_raw if v != v.lower()]
-    missing = tpl_vars - set(mapping.keys())
-
+    # ── Template placeholder validation (skip for send-only) ────
     errors = []
-    if wrong_case:
-        errors.append(
-            "Template placeholders not lowercase: " + ", ".join(wrong_case)
-        )
-    if missing:
-        errors.append(
-            "Unmapped template placeholders: " + ", ".join(sorted(missing))
-        )
+    if mode in ('generate', 'both'):
+        tpl_vars_raw = template_service.get_template_variables(tpl)
+        tpl_vars = {v.lower() for v in tpl_vars_raw}
+        wrong_case = [v for v in tpl_vars_raw if v != v.lower()]
+        missing = tpl_vars - set(mapping.keys())
+
+        if wrong_case:
+            errors.append(
+                "Template placeholders not lowercase: " + ", ".join(wrong_case)
+            )
+        if missing:
+            errors.append(
+                "Unmapped template placeholders: " + ", ".join(sorted(missing))
+            )
 
     # ── Subject / body / filename tag validation ────────────────
     def find_tags(text):
         return re.findall(r'\{(\w+)\}', text)
 
-    inv_subj = set(find_tags(email_subj_fmt)) - set(mapping.keys())
-    inv_body = set(find_tags(email_body_fmt)) - set(mapping.keys())
-    inv_fname = set(find_tags(filename_fmt)) - set(mapping.keys())
+    if mode in ('send', 'both'):
+        inv_subj = set(find_tags(email_subj_fmt)) - set(mapping.keys())
+        inv_body = set(find_tags(email_body_fmt)) - set(mapping.keys())
+        if inv_subj:
+            errors.append("Unknown placeholders in subject: " + ", ".join(sorted(inv_subj)))
+        if inv_body:
+            errors.append("Unknown placeholders in body: " + ", ".join(sorted(inv_body)))
 
-    if inv_subj:
-        errors.append("Unknown placeholders in subject: " + ", ".join(sorted(inv_subj)))
-    if inv_body:
-        errors.append("Unknown placeholders in body: " + ", ".join(sorted(inv_body)))
+    inv_fname = set(find_tags(filename_fmt)) - set(mapping.keys())
     if inv_fname:
         errors.append("Unknown placeholders in filename: " + ", ".join(sorted(inv_fname)))
 
     if errors:
         return jsonify(error="\n".join(errors)), 400
 
-    # ── Load credentials ────────────────────────────────────────
-    cfg = load_config()
-    auth_user = cfg.get('email', '')
-    auth_pwd = cfg.get('app_password', '')
+    # ── Load credentials (only needed when sending) ─────────────
+    auth_user = ''
+    auth_pwd = ''
+    if mode in ('send', 'both'):
+        cfg = load_config()
+        auth_user = cfg.get('email', '')
+        auth_pwd = cfg.get('app_password', '')
 
     # ── Launch background task ──────────────────────────────────
     task_service.start(
@@ -378,10 +410,11 @@ def start_processing():
         auth_pwd=auth_pwd,
         cert_dir=CERT_DIR,
         failed_path=FAILED_FILE,
+        mode=mode,
     )
 
-    log.info("Processing started: %d rows", len(df))
-    return jsonify(success=True, total=len(df))
+    log.info("Processing started (mode=%s): %d rows", mode, len(df))
+    return jsonify(success=True, total=len(df), mode=mode)
 
 
 @app.route('/api/progress')
@@ -401,6 +434,7 @@ def progress_stream():
                 'sent': ts.sent,
                 'failed_count': len(ts.failed),
                 'running': ts.running,
+                'mode': getattr(ts, 'mode', 'both'),
             }
             yield f"data: {json.dumps(payload)}\n\n"
             if ts.complete:
