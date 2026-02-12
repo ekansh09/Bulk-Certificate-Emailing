@@ -5,6 +5,7 @@ Handles .docx template rendering and conversion to PDF.
 """
 
 import os
+import sys
 import time
 import tempfile
 import itertools
@@ -54,7 +55,16 @@ def generate_pdf(template_path, context, filename_pattern, cert_dir, logger=None
             break
         final_path = f"{name}_{i}{ext}"
 
-    # 3. Convert with retries
+    # 3. Convert with retries (initialize COM on Windows for thread safety)
+    com_initialized = False
+    if sys.platform == 'win32':
+        try:
+            import pythoncom
+            pythoncom.CoInitialize()
+            com_initialized = True
+        except ImportError:
+            pass
+
     last_exc = None
     for attempt in range(1, 4):
         try:
@@ -66,10 +76,15 @@ def generate_pdf(template_path, context, filename_pattern, cert_dir, logger=None
                 logger(f"[PDF] Conversion failed (attempt {attempt}): {e}")
             time.sleep(2)
     else:
+        if com_initialized:
+            pythoncom.CoUninitialize()
         os.remove(tmp_docx)
         raise RuntimeError(
             f"Could not convert DOCX to PDF after 3 attempts: {last_exc}"
         )
+
+    if com_initialized:
+        pythoncom.CoUninitialize()
 
     # 4. Cleanup temp file
     try:
