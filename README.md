@@ -44,6 +44,9 @@ Each person gets their own certificate with their name filled in, converted to P
 | 📡 **Live progress** | Watch certificates being generated and emailed in real time |
 | 🔄 **Auto-retry** | If an email fails, it tries again automatically |
 | 🌙 **Dark & light mode** | Easy on the eyes, whichever you prefer |
+| 🎯 **Flexible workflow** | Generate certificates only, send emails only, or do both at once |
+| 🛡️ **Pre-flight validation** | Scans your data for problematic characters before processing |
+| 🧹 **Auto-sanitize filenames** | Special characters in names are handled automatically — no crashes |
 
 ---
 
@@ -133,7 +136,15 @@ In the app:
 1. **Upload** your spreadsheet → map columns to placeholders
 2. **Upload** your Word certificate template → preview it
 3. **Enter** your Gmail + App Password → compose your email
-4. **Hit Send** → watch the progress bar as certificates fly out 🚀
+4. **Choose your mode:**
+   - 🔵 **Generate Only** — create all PDF certificates without sending any email
+   - 🟣 **Send Only** — email previously generated certificates (skips PDF generation)
+   - 🟢 **Generate & Send** — create certificates and email them in one go
+5. **Hit your button** → watch the progress bar as certificates fly out 🚀
+
+> **Tip:** You can generate all certificates first to review them, then come back and use **Send Only** to email them. This gives you full control over the process.
+
+The app validates your data before processing — if any rows contain special characters (like `?`, `*`, `<`, `>`) that are invalid in filenames, you'll see a warning table. These characters are automatically replaced with `_` so generation won't fail.
 
 Failed emails are retried automatically. You can also download a list of any that didn't go through.
 
