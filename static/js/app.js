@@ -16,6 +16,8 @@ const state = {
     totalPages: 1,
     eventSource: null,
     htmlSourceMode: false,
+    activeCheckpointId: null,
+    lastFocusedField: null,
 };
 
 // ── Initialisation ─────────────────────────────────────────────────
@@ -23,6 +25,9 @@ document.addEventListener('DOMContentLoaded', () => {
     initUploadZones();
     loadCredentials();
     setDefaults();
+    initInsertableFields();
+    initCheckpointAutoSave();
+    loadCheckpoints();
 });
 
 function setDefaults() {
@@ -36,6 +41,10 @@ function setDefaults() {
 
 // ── Step Navigation ────────────────────────────────────────────────
 function goToStep(n) {
+    if (n === 'home' && state.currentStep !== 'home') {
+        resetApp();
+    }
+
     state.currentStep = n;
 
     document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
@@ -46,10 +55,82 @@ function goToStep(n) {
     const btn = document.querySelector(`.step-btn[data-step="${n}"]`);
     if (btn) btn.classList.add('active');
 
+    if (n === 'home') loadCheckpoints();
     if (n === 4) refreshEmailConfig();
     if (n === 5) refreshChecklist();
     if (n === 0) runHealthCheck();
 
+    updateStepStatuses();
+}
+
+function resetApp() {
+    // Clear active checkpoint
+    state.activeCheckpointId = null;
+
+    // Reset data state
+    state.dataLoaded = false;
+    state.rowCount = 0;
+    state.columns = [];
+    state.mapping = {};
+    state.currentPage = 0;
+    state.totalPages = 1;
+
+    // Reset template state
+    state.templateLoaded = false;
+    state.templateVars = [];
+
+    // Reset misc
+    state.htmlSourceMode = false;
+    state.lastFocusedField = null;
+
+    // ── Reset UI elements ──────────────────────────────────────
+    // Data panel
+    const dataInfo = document.getElementById('data-info');
+    if (dataInfo) dataInfo.textContent = '';
+    const mappingBody = document.getElementById('mapping-body');
+    if (mappingBody) mappingBody.innerHTML = '';
+    hide('mapping-card');
+    hide('preview-card');
+    hide('fixes-card');
+
+    // Template panel
+    const tplInfo = document.getElementById('template-info');
+    if (tplInfo) tplInfo.textContent = '';
+    const tplPreview = document.getElementById('template-preview');
+    if (tplPreview) tplPreview.innerHTML = '';
+    const varsEl = document.getElementById('template-vars');
+    if (varsEl) varsEl.innerHTML = '';
+    hide('tpl-preview-card');
+    hide('vars-card');
+
+    // Email config defaults
+    setDefaults();
+    const recipientSel = document.getElementById('recipient-col');
+    if (recipientSel) recipientSel.innerHTML = '<option value="">-- Select column --</option>';
+
+    // Step 5 cards
+    hide('progress-section');
+    hide('log-card');
+    hide('results-card');
+    clearLog();
+
+    // File inputs
+    const dataInput = document.getElementById('data-input');
+    if (dataInput) dataInput.value = '';
+    const tplInput = document.getElementById('template-input');
+    if (tplInput) tplInput.value = '';
+
+    // Close any SSE connection
+    if (state.eventSource) {
+        state.eventSource.close();
+        state.eventSource = null;
+    }
+
+    // Tell the server to clear its state too
+    fetch('/api/reset', { method: 'POST' }).catch(() => {});
+
+    // Reload credentials (they persist across sessions)
+    loadCredentials();
     updateStepStatuses();
 }
 
@@ -244,6 +325,8 @@ function rebuildMapping() {
         const col = inp.dataset.col;
         if (ph) state.mapping[ph] = col;
     });
+    // Auto-save to checkpoint when mapping changes
+    _debouncedCheckpointSave();
 }
 
 function renderPreview(preview) {
@@ -523,17 +606,52 @@ function updatePlaceholders() {
         const tag = document.createElement('span');
         tag.className = 'tag';
         tag.textContent = `{{${ph}}}`;
-        tag.title = 'Click to insert into editor';
+        tag.title = 'Click to insert into the last focused field';
         tag.onclick = () => {
             insertIntoEditor(`{{${ph}}}`);
-            toast('Inserted: {{' + ph + '}}', 'info');
+            const targetLabel = state.lastFocusedField === 'email-subject' ? 'subject'
+                : state.lastFocusedField === 'filename-pattern' ? 'filename'
+                : 'body';
+            toast(`Inserted {{${ph}}} into ${targetLabel}`, 'info');
         };
         container.appendChild(tag);
     });
 }
 
-function insertIntoEditor(text) {
+function initInsertableFields() {
+    // Track which field was last focused so placeholder tags insert there
+    const fields = ['email-subject', 'filename-pattern'];
+    fields.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('focus', () => { state.lastFocusedField = id; });
+        }
+    });
     const editor = document.getElementById('email-body');
+    if (editor) {
+        editor.addEventListener('focus', () => { state.lastFocusedField = 'email-body'; });
+    }
+    const source = document.getElementById('email-body-source');
+    if (source) {
+        source.addEventListener('focus', () => { state.lastFocusedField = 'email-body-source'; });
+    }
+}
+
+function insertIntoEditor(text) {
+    const target = state.lastFocusedField;
+
+    // If the last focused field is a plain <input>, insert at its cursor position
+    if (target === 'email-subject' || target === 'filename-pattern') {
+        const el = document.getElementById(target);
+        const start = el.selectionStart ?? el.value.length;
+        const end = el.selectionEnd ?? start;
+        el.value = el.value.substring(0, start) + text + el.value.substring(end);
+        el.selectionStart = el.selectionEnd = start + text.length;
+        el.focus();
+        return;
+    }
+
+    // HTML source mode
     if (state.htmlSourceMode) {
         const ta = document.getElementById('email-body-source');
         const start = ta.selectionStart;
@@ -541,10 +659,13 @@ function insertIntoEditor(text) {
         ta.value = ta.value.substring(0, start) + text + ta.value.substring(end);
         ta.selectionStart = ta.selectionEnd = start + text.length;
         ta.focus();
-    } else {
-        editor.focus();
-        document.execCommand('insertText', false, text);
+        return;
     }
+
+    // Default: rich text editor
+    const editor = document.getElementById('email-body');
+    editor.focus();
+    document.execCommand('insertText', false, text);
 }
 
 // ── Checklist ──────────────────────────────────────────────────────
@@ -571,6 +692,14 @@ function refreshChecklist() {
         li.innerHTML = `<span class="check-icon">${c.ok ? '✅' : '❌'}</span> ${escHtml(c.text)}`;
         list.appendChild(li);
     });
+
+    // Show "Save Session" button when all checks pass
+    const allPassed = checks.every(c => c.ok);
+    const saveBtn = document.getElementById('save-checkpoint-btn');
+    if (saveBtn) {
+        if (allPassed) saveBtn.classList.remove('hidden');
+        else saveBtn.classList.add('hidden');
+    }
 
     // Auto-run validation when step 5 is opened
     runValidation();
@@ -641,6 +770,7 @@ async function startProcessing(mode = 'both') {
         body: bodyText,
         body_html: fullHtml,
         filename_pattern: document.getElementById('filename-pattern').value.trim(),
+        checkpoint_id: state.activeCheckpointId || null,
     };
 
     setModeButtonsDisabled(true);
@@ -660,10 +790,14 @@ async function startProcessing(mode = 'both') {
         }
 
         state.currentMode = mode;
+        if (data.checkpoint_id) state.activeCheckpointId = data.checkpoint_id;
         show('progress-section');
         show('log-card');
         hide('results-card');
         clearLog();
+
+        const stopBtn = document.getElementById('stop-btn');
+        if (stopBtn) { stopBtn.disabled = false; stopBtn.textContent = '⏹ Stop'; }
 
         const modeLabels = { generate: 'Generating', send: 'Sending', both: 'Processing' };
         toast(`${modeLabels[mode]} ${data.total} rows…`, 'info');
@@ -705,6 +839,7 @@ function connectProgress() {
             locating: '🔍 Locating existing certificates…',
             sending: '📧 Sending emails…',
             complete: '✅ Complete',
+            stopped: '⏹ Stopped',
             idle: 'Preparing…',
         };
         document.getElementById('phase-label').textContent = phaseMap[d.phase] || d.phase;
@@ -723,6 +858,8 @@ function connectProgress() {
             state.eventSource = null;
             showResults(d);
             setModeButtonsDisabled(false);
+            const stopBtn = document.getElementById('stop-btn');
+            if (stopBtn) stopBtn.disabled = true;
         }
     };
 
@@ -737,6 +874,7 @@ function connectProgress() {
 function getLogClass(msg) {
     if (msg.startsWith('[SENT]'))  return 'sent';
     if (msg.startsWith('[FAIL]') || msg.startsWith('[ERROR]')) return 'fail';
+    if (msg.startsWith('[STOP]')) return 'fail';
     if (msg.startsWith('═══'))    return 'phase';
     return 'info';
 }
@@ -745,20 +883,25 @@ function showResults(data) {
     show('results-card');
     const summary = document.getElementById('results-summary');
     const mode = state.currentMode || 'both';
+    const stopped = data.phase === 'stopped';
+    const stoppedNote = stopped ? '<p style="color:var(--error)">⏹ Processing was stopped by user</p>' : '';
 
     if (mode === 'generate') {
         const generated = data.total - data.failed_count;
         summary.innerHTML = `
+            ${stoppedNote}
             <p>Generated: <span class="result-sent">${generated}</span> / ${data.total} certificates</p>
             <p>Failed: <span class="result-failed">${data.failed_count}</span></p>
         `;
     } else if (mode === 'send') {
         summary.innerHTML = `
+            ${stoppedNote}
             <p>Sent: <span class="result-sent">${data.sent}</span> / ${data.total}</p>
             <p>Failed: <span class="result-failed">${data.failed_count}</span></p>
         `;
     } else {
         summary.innerHTML = `
+            ${stoppedNote}
             <p>Sent: <span class="result-sent">${data.sent}</span> / ${data.total}</p>
             <p>Failed: <span class="result-failed">${data.failed_count}</span></p>
         `;
@@ -781,10 +924,14 @@ function showResults(data) {
 
     const modeLabels = { generate: 'generated', send: 'sent', both: 'processed' };
     toast(
-        `Done! ${mode === 'generate'
-            ? (data.total - data.failed_count) + '/' + data.total + ' generated'
-            : data.sent + '/' + data.total + ' sent'}, ${data.failed_count} failed.`,
-        data.failed_count > 0 ? 'error' : 'success'
+        stopped
+            ? `Stopped. ${mode === 'generate'
+                ? (data.total - data.failed_count) + '/' + data.total + ' generated so far'
+                : data.sent + '/' + data.total + ' sent so far'}.`
+            : `Done! ${mode === 'generate'
+                ? (data.total - data.failed_count) + '/' + data.total + ' generated'
+                : data.sent + '/' + data.total + ' sent'}, ${data.failed_count} failed.`,
+        (stopped || data.failed_count > 0) ? 'error' : 'success'
     );
 }
 
@@ -794,6 +941,127 @@ function downloadFailed() {
 
 function clearLog() {
     document.getElementById('log-area').innerHTML = '';
+}
+
+// ── Checkpoint Auto-Save ───────────────────────────────────────────
+let _cpSaveTimer = null;
+
+function _debouncedCheckpointSave(delay = 800) {
+    if (_cpSaveTimer) clearTimeout(_cpSaveTimer);
+    _cpSaveTimer = setTimeout(() => autoSaveCheckpoint(), delay);
+}
+
+async function autoSaveCheckpoint() {
+    const cpId = state.activeCheckpointId;
+    if (!cpId) return;
+
+    rebuildMapping();
+    const bodyHtml = getEditorHtml();
+    const bodyPlain = getEditorText();
+
+    const payload = {
+        mapping: state.mapping,
+        recipient_col: document.getElementById('recipient-col').value,
+        subject: document.getElementById('email-subject').value.trim(),
+        body_plain: bodyPlain,
+        body_html: bodyHtml,
+        filename_pattern: document.getElementById('filename-pattern').value.trim(),
+    };
+
+    try {
+        await fetch(`/api/checkpoints/${cpId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+    } catch (e) {
+        // silent — auto-save is best-effort
+    }
+}
+
+function initCheckpointAutoSave() {
+    // Text inputs: debounced save on typing
+    ['email-subject', 'filename-pattern'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', () => _debouncedCheckpointSave());
+    });
+
+    // Recipient column: save on change
+    const recipientSel = document.getElementById('recipient-col');
+    if (recipientSel) recipientSel.addEventListener('change', () => _debouncedCheckpointSave(0));
+
+    // Rich text editor: debounced save on input
+    const editor = document.getElementById('email-body');
+    if (editor) editor.addEventListener('input', () => _debouncedCheckpointSave());
+
+    // HTML source textarea
+    const source = document.getElementById('email-body-source');
+    if (source) source.addEventListener('input', () => _debouncedCheckpointSave());
+}
+
+async function stopProcessing() {
+    const stopBtn = document.getElementById('stop-btn');
+    if (stopBtn) {
+        stopBtn.disabled = true;
+        stopBtn.textContent = 'Stopping…';
+    }
+    try {
+        const res = await fetch('/api/stop', { method: 'POST' });
+        const data = await res.json();
+        if (res.ok) {
+            toast('Stop requested — finishing current item…', 'info');
+        } else {
+            toast(data.error || 'Could not stop', 'error');
+            if (stopBtn) { stopBtn.disabled = false; stopBtn.textContent = '⏹ Stop'; }
+        }
+    } catch (e) {
+        toast('Network error: ' + e.message, 'error');
+        if (stopBtn) { stopBtn.disabled = false; stopBtn.textContent = '⏹ Stop'; }
+    }
+}
+
+async function saveCheckpointOnly() {
+    rebuildMapping();
+
+    const bodyHtml = getEditorHtml();
+    const bodyText = getEditorText();
+
+    const payload = {
+        mapping: state.mapping,
+        recipient_col: document.getElementById('recipient-col').value,
+        subject: document.getElementById('email-subject').value.trim(),
+        body: bodyText,
+        body_html: bodyHtml,
+        filename_pattern: document.getElementById('filename-pattern').value.trim(),
+        checkpoint_id: state.activeCheckpointId || null,
+    };
+
+    const btn = document.getElementById('save-checkpoint-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+    try {
+        const res = await fetch('/api/save-checkpoint', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+            state.activeCheckpointId = data.checkpoint_id;
+            toast('Session saved! You can close the app and resume later from Home.', 'success');
+            loadCheckpoints();
+        } else {
+            toast(data.error || 'Save failed', 'error');
+        }
+    } catch (e) {
+        toast('Network error: ' + e.message, 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px;margin-right:4px;"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save Session for Later`;
+        }
+    }
 }
 
 // ── Theme Toggle ───────────────────────────────────────────────────
@@ -862,3 +1130,196 @@ document.addEventListener('click', (e) => {
         overlay.classList.remove('open');
     }
 });
+
+// ── Checkpoints / Recent Sessions ──────────────────────────────────
+async function loadCheckpoints() {
+    const container = document.getElementById('checkpoints-list');
+    if (!container) return;
+
+    try {
+        const res = await fetch('/api/checkpoints');
+        const data = await res.json();
+
+        const cps = data.checkpoints || [];
+        if (cps.length === 0) {
+            container.innerHTML = '<p class="hint" style="text-align:center;">No previous sessions found.</p>';
+            return;
+        }
+
+        let html = '';
+        cps.forEach(cp => {
+            const isActive = cp.id === state.activeCheckpointId;
+            const statusIcon = cp.status === 'complete' ? '✅' : '🔄';
+            const genLabel = cp.generated_count > 0 ? `${cp.generated_count} generated` : '';
+            const sentLabel = cp.sent_count > 0 ? `${cp.sent_count} sent` : '';
+            const details = [genLabel, sentLabel].filter(Boolean).join(', ') || 'No activity yet';
+            const emailLabel = cp.email_used ? `📧 ${cp.email_used}` : '';
+
+            html += `
+                <div class="checkpoint-item ${isActive ? 'active' : ''}" data-id="${escHtml(cp.id)}">
+                    <div class="checkpoint-info">
+                        <div class="checkpoint-label">
+                            <span class="checkpoint-status">${statusIcon}</span>
+                            <strong>${escHtml(cp.label)}</strong>
+                            ${isActive ? '<span class="tag" style="margin-left:6px;font-size:11px;">Active</span>' : ''}
+                        </div>
+                        <div class="checkpoint-meta">
+                            ${cp.row_count} rows · ${details}
+                            ${cp.filename_pattern ? ' · <code>' + escHtml(cp.filename_pattern) + '</code>' : ''}
+                            ${emailLabel ? '<br>' + escHtml(emailLabel) : ''}
+                        </div>
+                    </div>
+                    <div class="checkpoint-actions">
+                        <button class="btn btn-sm ${isActive ? 'btn-secondary' : 'btn-primary'}"
+                                onclick="restoreCheckpoint('${escHtml(cp.id)}')"
+                                ${isActive ? 'disabled' : ''}>
+                            ${isActive ? 'Loaded' : 'Load'}
+                        </button>
+                    </div>
+                </div>
+            `;
+        });
+
+        container.innerHTML = html;
+    } catch (e) {
+        container.innerHTML = '<p class="hint" style="text-align:center;">Could not load sessions.</p>';
+    }
+}
+
+async function restoreCheckpoint(cpId) {
+    try {
+        toast('Loading session…', 'info');
+        const res = await fetch(`/api/checkpoints/${cpId}/load`, { method: 'POST' });
+        const data = await res.json();
+
+        if (!res.ok) {
+            toast(data.error || 'Failed to load session', 'error');
+            return;
+        }
+
+        const cp = data.checkpoint;
+        state.activeCheckpointId = cp.id;
+
+        // ── Restore data state ─────────────────────────────────
+        if (data.data_loaded) {
+            state.dataLoaded = true;
+            state.rowCount = data.row_count;
+            state.columns = data.columns;
+
+            const dataInfo = document.getElementById('data-info');
+            if (dataInfo) dataInfo.textContent = `✓ Restored from session — ${data.row_count} rows, ${data.columns.length} columns`;
+
+            // Rebuild mapping from checkpoint
+            if (cp.mapping) {
+                state.mapping = cp.mapping;
+                const body = document.getElementById('mapping-body');
+                if (body) {
+                    body.innerHTML = '';
+                    for (const [ph, col] of Object.entries(cp.mapping)) {
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td><strong>${escHtml(col)}</strong></td>
+                            <td><input type="text" value="${escHtml(ph)}" data-col="${escHtml(col)}"
+                                       spellcheck="false" autocomplete="off"></td>
+                        `;
+                        const input = tr.querySelector('input');
+                        input.addEventListener('input', () => {
+                            rebuildMapping();
+                            updatePlaceholders();
+                        });
+                        body.appendChild(tr);
+                    }
+                }
+                show('mapping-card');
+            }
+
+            // Render data preview if returned
+            if (data.data_preview) {
+                state.currentPage = data.data_preview.page;
+                state.totalPages = data.data_preview.total_pages;
+                renderPreview(data.data_preview);
+                show('preview-card');
+            }
+        }
+
+        // ── Restore template state ─────────────────────────────
+        if (data.template_loaded) {
+            state.templateLoaded = true;
+            state.templateVars = data.template_vars || [];
+
+            const tplInfo = document.getElementById('template-info');
+            if (tplInfo) tplInfo.textContent = '✓ Template restored from session';
+
+            // Show template preview
+            if (data.template_preview_html) {
+                const tplPreview = document.getElementById('template-preview');
+                if (tplPreview) {
+                    tplPreview.innerHTML = data.template_preview_html;
+                    show('tpl-preview-card');
+                }
+            }
+
+            // Show template variables
+            if (state.templateVars.length) {
+                const varsEl = document.getElementById('template-vars');
+                if (varsEl) {
+                    varsEl.innerHTML = '';
+                    state.templateVars.forEach(v => {
+                        const span = document.createElement('span');
+                        span.className = 'tag';
+                        span.textContent = `{{${v}}}`;
+                        varsEl.appendChild(span);
+                    });
+                    show('vars-card');
+                }
+            }
+        }
+
+        // ── Restore email config fields ────────────────────────
+        if (cp.subject) {
+            document.getElementById('email-subject').value = cp.subject;
+        }
+        if (cp.filename_pattern) {
+            document.getElementById('filename-pattern').value = cp.filename_pattern;
+        }
+        if (cp.body_html) {
+            const editor = document.getElementById('email-body');
+            if (editor) editor.innerHTML = cp.body_html;
+        }
+        if (cp.recipient_col) {
+            const sel = document.getElementById('recipient-col');
+            sel.innerHTML = '<option value="">-- Select column --</option>';
+            state.columns.forEach(col => {
+                const opt = document.createElement('option');
+                opt.value = col;
+                opt.textContent = col;
+                sel.appendChild(opt);
+            });
+            sel.value = cp.recipient_col;
+        }
+
+        // ── Credential check ───────────────────────────────────
+        if (data.cp_email && !data.credentials_match) {
+            state.credentialsSaved = false;
+            toast(`⚠️ Session used ${data.cp_email} but no matching saved password found. Update credentials in Step 3.`, 'error');
+        } else if (data.cp_email && data.credentials_match) {
+            state.credentialsSaved = true;
+        }
+
+        updateStepStatuses();
+        updatePlaceholders();
+        loadCheckpoints();
+
+        const hasPdfManifest = cp.pdf_manifest && cp.pdf_manifest.length > 0;
+        toast(
+            `Session restored: ${data.row_count} rows` +
+            (hasPdfManifest ? ` — ${cp.pdf_manifest.length} PDFs mapped` : ''),
+            'success'
+        );
+
+        // Navigate to Step 5 so user can directly run
+        goToStep(5);
+    } catch (e) {
+        toast('Network error: ' + e.message, 'error');
+    }
+}

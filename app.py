@@ -26,6 +26,7 @@ from config import (
     load_config, save_config,
 )
 from services import data_service, template_service, email_service, task_service
+from services import checkpoint_service
 
 # ── Logging ─────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -39,10 +40,18 @@ log = logging.getLogger(__name__)
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50 MB
 
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    """Return JSON instead of HTML for all uncaught errors."""
+    log.exception("Unhandled exception: %s", e)
+    return jsonify(error=str(e)), 500
+
 # ── In-memory state (single-user application) ──────────────────────
 state = {
     'data_df': None,
     'template_path': None,
+    'active_checkpoint_id': None,
 }
 
 
@@ -53,6 +62,15 @@ state = {
 @app.route('/')
 def index():
     return render_template('index.html')
+
+
+@app.route('/api/reset', methods=['POST'])
+def reset_state():
+    """Clear all in-memory state so the user starts fresh."""
+    state['data_df'] = None
+    state['template_path'] = None
+    state['active_checkpoint_id'] = None
+    return jsonify(success=True)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -187,6 +205,17 @@ def upload_data():
         placeholders = [data_service.default_placeholder(c) for c in columns]
         preview = data_service.get_preview(df, page=0)
         log.info("Data loaded: %s (%d rows, %d fixes)", f.filename, len(df), len(fixes))
+
+        # Sync to active checkpoint if one is loaded
+        cp_id = state.get('active_checkpoint_id')
+        if cp_id:
+            checkpoint_service.sync_file_to_checkpoint(
+                BASE_DIR, cp_id, path, f'data{ext}'
+            )
+            checkpoint_service.update_checkpoint_fields(
+                BASE_DIR, cp_id, row_count=len(df)
+            )
+
         return jsonify(
             columns=columns,
             placeholders=placeholders,
@@ -230,6 +259,14 @@ def upload_template():
         html = template_service.get_preview_html(path)
         variables = template_service.get_template_variables(path)
         log.info("Template loaded: %s (vars: %s)", f.filename, variables)
+
+        # Sync to active checkpoint if one is loaded
+        cp_id = state.get('active_checkpoint_id')
+        if cp_id:
+            checkpoint_service.sync_file_to_checkpoint(
+                BASE_DIR, cp_id, path, 'template.docx'
+            )
+
         return jsonify(preview_html=html, variables=variables)
     except Exception as e:
         log.error("Template load error: %s", e)
@@ -260,6 +297,14 @@ def save_credentials():
         return jsonify(error="Both email and app password are required"), 400
     save_config({'email': email, 'app_password': password})
     log.info("Credentials saved for %s", email)
+
+    # Update active checkpoint with the new email
+    cp_id = state.get('active_checkpoint_id')
+    if cp_id:
+        checkpoint_service.update_checkpoint_fields(
+            BASE_DIR, cp_id, email_used=email
+        )
+
     return jsonify(success=True)
 
 
@@ -397,6 +442,34 @@ def start_processing():
         auth_pwd = cfg.get('app_password', '')
 
     # ── Launch background task ──────────────────────────────────
+    # Create / update checkpoint
+    cp_id = data.get('checkpoint_id') or state.get('active_checkpoint_id')
+
+    # Resolve data file path for checkpoint
+    data_path = None
+    for ext in ('.xlsx', '.xls', '.csv'):
+        candidate = os.path.join(UPLOAD_DIR, f'data{ext}')
+        if os.path.isfile(candidate):
+            data_path = candidate
+            break
+
+    cp_id = checkpoint_service.create_checkpoint(
+        BASE_DIR,
+        mapping=mapping,
+        recipient_col=recipient_col,
+        subject=email_subj,
+        body_plain=email_body,
+        body_html=email_body_html,
+        filename_pattern=filename,
+        cert_dir=CERT_DIR,
+        data_path=data_path,
+        template_path=tpl,
+        row_count=len(df),
+        checkpoint_id=cp_id,
+        email_used=auth_user,
+    )
+    state['active_checkpoint_id'] = cp_id
+
     task_service.start(
         data_df=df,
         template_path=tpl,
@@ -411,10 +484,12 @@ def start_processing():
         cert_dir=CERT_DIR,
         failed_path=FAILED_FILE,
         mode=mode,
+        base_dir=BASE_DIR,
+        checkpoint_id=cp_id,
     )
 
-    log.info("Processing started (mode=%s): %d rows", mode, len(df))
-    return jsonify(success=True, total=len(df), mode=mode)
+    log.info("Processing started (mode=%s): %d rows, checkpoint=%s", mode, len(df), cp_id)
+    return jsonify(success=True, total=len(df), mode=mode, checkpoint_id=cp_id)
 
 
 @app.route('/api/progress')
@@ -454,6 +529,201 @@ def download_failed():
     if not os.path.exists(FAILED_FILE):
         return jsonify(error="No failed list available"), 404
     return send_file(FAILED_FILE, as_attachment=True, download_name='failed_list.csv')
+
+
+@app.route('/api/stop', methods=['POST'])
+def stop_processing():
+    """Request the running task to stop gracefully."""
+    if task_service.stop():
+        return jsonify(success=True, message="Stop requested")
+    return jsonify(error="No task is running"), 400
+
+
+@app.route('/api/save-checkpoint', methods=['POST'])
+def save_checkpoint_only():
+    """Save the current configuration as a checkpoint without running."""
+    data = request.get_json()
+    df = state.get('data_df')
+    tpl = state.get('template_path')
+
+    if df is None:
+        return jsonify(error="No data loaded"), 400
+
+    mapping = data.get('mapping', {})
+    recipient_col = data.get('recipient_col', '')
+    email_subj = data.get('subject', '')
+    email_body = data.get('body', '')
+    email_body_html = data.get('body_html', '')
+    filename = data.get('filename_pattern', '')
+
+    if not filename:
+        return jsonify(error="Filename pattern is required"), 400
+
+    # If body plain text is empty, strip HTML tags for a fallback
+    if not email_body and email_body_html:
+        email_body = re.sub(r'<[^>]+>', '', email_body_html).strip()
+
+    # Resolve data file path
+    data_path = None
+    for ext in ('.xlsx', '.xls', '.csv'):
+        candidate = os.path.join(UPLOAD_DIR, f'data{ext}')
+        if os.path.isfile(candidate):
+            data_path = candidate
+            break
+
+    cfg = load_config()
+    auth_user = cfg.get('email', '')
+
+    cp_id = data.get('checkpoint_id') or state.get('active_checkpoint_id')
+    cp_id = checkpoint_service.create_checkpoint(
+        BASE_DIR,
+        mapping=mapping,
+        recipient_col=recipient_col,
+        subject=email_subj,
+        body_plain=email_body,
+        body_html=email_body_html,
+        filename_pattern=filename,
+        cert_dir=CERT_DIR,
+        data_path=data_path,
+        template_path=tpl,
+        row_count=len(df),
+        checkpoint_id=cp_id,
+        email_used=auth_user,
+    )
+    state['active_checkpoint_id'] = cp_id
+
+    log.info("Checkpoint saved (no run): %s", cp_id)
+    return jsonify(success=True, checkpoint_id=cp_id)
+
+
+# ════════════════════════════════════════════════════════════════
+#  Checkpoint endpoints
+# ════════════════════════════════════════════════════════════════
+
+@app.route('/api/checkpoints')
+def list_checkpoints():
+    """Return the last 3 checkpoints."""
+    cps = checkpoint_service.list_checkpoints(BASE_DIR, limit=3)
+    return jsonify(checkpoints=cps)
+
+
+@app.route('/api/checkpoints/<cp_id>')
+def get_checkpoint(cp_id):
+    """Return full checkpoint details."""
+    cp = checkpoint_service.load_checkpoint(BASE_DIR, cp_id)
+    if not cp:
+        return jsonify(error="Checkpoint not found"), 404
+    return jsonify(cp)
+
+
+@app.route('/api/checkpoints/<cp_id>/load', methods=['POST'])
+def load_checkpoint(cp_id):
+    """Load a checkpoint’s data file and template into the app state.
+
+    Returns the checkpoint config so the frontend can restore UI fields.
+    """
+    cp = checkpoint_service.load_checkpoint(BASE_DIR, cp_id)
+    if not cp:
+        return jsonify(error="Checkpoint not found"), 404
+
+    # Restore the data file from checkpoint
+    cp_dir = os.path.join(BASE_DIR, 'checkpoints', cp_id)
+    data_file = None
+    for ext in ('.xlsx', '.xls', '.csv'):
+        candidate = os.path.join(cp_dir, f'data{ext}')
+        if os.path.isfile(candidate):
+            data_file = candidate
+            break
+
+    columns = []
+    row_count = 0
+    if data_file:
+        try:
+            df, _ = data_service.load_data(data_file)
+            state['data_df'] = df
+            columns = list(df.columns)
+            row_count = len(df)
+        except Exception as e:
+            log.error("Could not load checkpoint data: %s", e)
+            return jsonify(error=f"Failed to load checkpoint data: {e}"), 400
+
+    # Restore the template
+    tpl_file = os.path.join(cp_dir, 'template.docx')
+    if os.path.isfile(tpl_file):
+        state['template_path'] = tpl_file
+
+    state['active_checkpoint_id'] = cp_id
+
+    # Check if saved credentials match the email used in this checkpoint
+    credentials_match = False
+    cp_email = cp.get('email_used', '')
+    if cp_email:
+        cfg = load_config()
+        saved_email = cfg.get('email', '')
+        saved_pwd = cfg.get('app_password', '')
+        credentials_match = (saved_email == cp_email and bool(saved_pwd))
+    else:
+        credentials_match = True  # no email was saved, nothing to warn about
+
+    # Get template preview HTML if available
+    tpl_preview_html = ''
+    tpl_vars = []
+    if os.path.isfile(tpl_file):
+        try:
+            tpl_preview_html = template_service.get_preview_html(tpl_file)
+            tpl_vars = template_service.get_template_variables(tpl_file)
+        except Exception:
+            pass
+
+    # Get data preview if loaded
+    data_preview = None
+    placeholders = []
+    if data_file and state.get('data_df') is not None:
+        placeholders = [data_service.default_placeholder(c) for c in columns]
+        data_preview = data_service.get_preview(state['data_df'], page=0)
+
+    return jsonify(
+        checkpoint=cp,
+        columns=columns,
+        placeholders=placeholders,
+        row_count=row_count,
+        data_loaded=data_file is not None,
+        template_loaded=os.path.isfile(tpl_file),
+        template_preview_html=tpl_preview_html,
+        template_vars=tpl_vars,
+        data_preview=data_preview,
+        credentials_match=credentials_match,
+        cp_email=cp_email,
+    )
+
+
+@app.route('/api/checkpoints/<cp_id>', methods=['PATCH'])
+def update_checkpoint(cp_id):
+    """Update editable fields in an existing checkpoint."""
+    cp = checkpoint_service.load_checkpoint(BASE_DIR, cp_id)
+    if not cp:
+        return jsonify(error="Checkpoint not found"), 404
+
+    data = request.get_json()
+    ok = checkpoint_service.update_checkpoint_fields(
+        BASE_DIR, cp_id,
+        mapping=data.get('mapping', cp.get('mapping')),
+        recipient_col=data.get('recipient_col', cp.get('recipient_col')),
+        subject=data.get('subject', cp.get('subject')),
+        body_plain=data.get('body_plain', cp.get('body_plain')),
+        body_html=data.get('body_html', cp.get('body_html')),
+        filename_pattern=data.get('filename_pattern', cp.get('filename_pattern')),
+    )
+    return jsonify(success=ok)
+
+
+@app.route('/api/checkpoints/<cp_id>', methods=['DELETE'])
+def delete_checkpoint(cp_id):
+    """Delete a checkpoint."""
+    checkpoint_service.delete_checkpoint(BASE_DIR, cp_id)
+    if state.get('active_checkpoint_id') == cp_id:
+        state['active_checkpoint_id'] = None
+    return jsonify(success=True)
 
 
 # ════════════════════════════════════════════════════════════════════

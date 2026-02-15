@@ -21,6 +21,7 @@ failed_list.csv
 
 # ── Generated Outputs ─────────────────────────
 certificates/
+checkpoints/
 uploads/
 
 # ── OS Files ───────────────────────────────────

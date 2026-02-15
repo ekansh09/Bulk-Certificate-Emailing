@@ -1178,3 +1178,68 @@ select.input { cursor: pointer; }
     .main { padding: 20px 16px 12px; max-width: 100%; }
     .hero-title { font-size: 1.6rem; }
 }
+
+/* ── Checkpoint / Recent Sessions ──────────────────────────────── */
+.checkpoint-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    margin-bottom: 8px;
+    transition: border-color .2s, background .2s;
+}
+
+.checkpoint-item:hover {
+    border-color: var(--accent);
+    background: var(--accent-light);
+}
+
+.checkpoint-item.active {
+    border-color: var(--accent);
+    background: var(--accent-light);
+}
+
+[data-theme="dark"] .checkpoint-item:hover,
+[data-theme="dark"] .checkpoint-item.active {
+    background: rgba(99,102,241,.12);
+}
+
+.checkpoint-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.checkpoint-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: .93rem;
+}
+
+.checkpoint-status {
+    font-size: 1rem;
+}
+
+.checkpoint-meta {
+    font-size: .82rem;
+    color: var(--text-dim);
+    margin-top: 3px;
+}
+
+.checkpoint-meta code {
+    font-size: .78rem;
+    background: rgba(0,0,0,.06);
+    padding: 1px 5px;
+    border-radius: 4px;
+}
+
+[data-theme="dark"] .checkpoint-meta code {
+    background: rgba(255,255,255,.08);
+}
+
+.checkpoint-actions {
+    flex-shrink: 0;
+    margin-left: 12px;
+}
